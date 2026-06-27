@@ -413,7 +413,9 @@ describe("SightingComposer", () => {
           result,
           finish: () => {
             this.result = result;
-            this.onload?.(new ProgressEvent("load"));
+            this.onload?.(
+              new ProgressEvent("load") as unknown as ProgressEvent<FileReader>,
+            );
           },
         });
       }
