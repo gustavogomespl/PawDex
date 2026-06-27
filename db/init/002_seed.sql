@@ -172,3 +172,122 @@ VALUES
     'confirmed'
   )
 ON CONFLICT (id) DO NOTHING;
+
+WITH seed_embeddings (
+  place_id,
+  animal_id,
+  sighting_id,
+  model_version,
+  basis_index,
+  quality_score
+) AS (
+  VALUES
+    (
+      'place-office-centro',
+      'animal-mingau',
+      'sighting-mingau-001',
+      'torchvision-mobilenet-v3-small-imagenet1k-v1',
+      1,
+      0.82
+    ),
+    (
+      'place-office-centro',
+      'animal-caramelo',
+      'sighting-caramelo-001',
+      'torchvision-mobilenet-v3-small-imagenet1k-v1',
+      2,
+      0.8
+    ),
+    (
+      'place-office-centro',
+      'animal-pretinha',
+      'sighting-pretinha-003',
+      'torchvision-mobilenet-v3-small-imagenet1k-v1',
+      3,
+      0.79
+    ),
+    (
+      'place-office-centro',
+      'animal-luna',
+      NULL,
+      'torchvision-mobilenet-v3-small-imagenet1k-v1',
+      4,
+      0.74
+    ),
+    (
+      'place-office-centro',
+      'animal-sombra',
+      NULL,
+      'torchvision-mobilenet-v3-small-imagenet1k-v1',
+      5,
+      0.71
+    ),
+    (
+      'place-office-centro',
+      'animal-thor',
+      'sighting-thor-002',
+      'torchvision-mobilenet-v3-small-imagenet1k-v1',
+      6,
+      0.78
+    ),
+    (
+      'place-office-centro',
+      'animal-bento',
+      NULL,
+      'torchvision-mobilenet-v3-small-imagenet1k-v1',
+      7,
+      0.7
+    )
+),
+seed_vectors AS (
+  SELECT
+    seed_embeddings.place_id,
+    seed_embeddings.animal_id,
+    seed_embeddings.sighting_id,
+    seed_embeddings.model_version,
+    seed_embeddings.quality_score,
+    (
+      '[' ||
+      string_agg(
+        CASE
+          WHEN dimension = seed_embeddings.basis_index THEN '1'
+          ELSE '0'
+        END,
+        ','
+        ORDER BY dimension
+      ) ||
+      ']'
+    )::vector(576) AS embedding
+  FROM seed_embeddings
+  CROSS JOIN generate_series(1, 576) AS dimension
+  GROUP BY
+    seed_embeddings.place_id,
+    seed_embeddings.animal_id,
+    seed_embeddings.sighting_id,
+    seed_embeddings.model_version,
+    seed_embeddings.quality_score
+)
+INSERT INTO animal_embeddings (
+  place_id,
+  animal_id,
+  sighting_id,
+  model_version,
+  embedding,
+  quality_score
+)
+SELECT
+  place_id,
+  animal_id,
+  sighting_id,
+  model_version,
+  embedding,
+  quality_score
+FROM seed_vectors
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM animal_embeddings existing
+  WHERE existing.place_id = seed_vectors.place_id
+    AND existing.animal_id = seed_vectors.animal_id
+    AND existing.sighting_id IS NOT DISTINCT FROM seed_vectors.sighting_id
+    AND existing.model_version = seed_vectors.model_version
+);

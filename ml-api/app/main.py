@@ -22,6 +22,12 @@ class ConfirmSightingRequest(BaseModel):
     place_id: str = Field(alias="placeId")
     decision: Literal["existing", "new"]
     animal_id: Optional[str] = Field(default=None, alias="animalId")
+    match_confidence: Optional[float] = Field(
+        default=None,
+        alias="matchConfidence",
+        ge=0,
+        le=1,
+    )
     display_name: Optional[str] = Field(default=None, alias="displayName")
     species: Optional[str] = None
     photo_url: str = Field(alias="photoUrl")
@@ -178,6 +184,7 @@ def create_app(
                     animal_id=request.animal_id,
                     photo_url=request.photo_url,
                     zone_label=request.zone_label,
+                    match_confidence=request.match_confidence,
                 )
 
             if request.display_name is None or request.species is None:

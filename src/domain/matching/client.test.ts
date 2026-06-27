@@ -80,6 +80,7 @@ describe("matching client", () => {
       placeId: "place-office-centro",
       decision: "existing" as const,
       animalId: "animal-mingau",
+      matchConfidence: 0.86,
       photoUrl: "data:image/png;base64,cGV0",
     };
 

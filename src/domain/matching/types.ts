@@ -38,6 +38,7 @@ export type ConfirmSightingPayload =
       placeId: string;
       decision: "existing";
       animalId: string;
+      matchConfidence: number;
       photoUrl: string;
       zoneLabel?: string;
     }

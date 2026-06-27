@@ -49,6 +49,7 @@ describe("POST /api/confirm-sighting", () => {
       placeId: "park-1",
       decision: "existing",
       animalId: "animal-1",
+      matchConfidence: 0.84,
       photoUrl: "/uploads/pet.png",
       zoneLabel: "Gate",
     };
@@ -135,6 +136,7 @@ describe("POST /api/confirm-sighting", () => {
           placeId: "park-1",
           decision: "existing",
           animalId: "animal-1",
+          matchConfidence: 0.84,
           photoUrl: "/uploads/pet.png",
         }),
         headers: { "content-type": "application/json" },

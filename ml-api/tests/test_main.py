@@ -1,4 +1,5 @@
 from io import BytesIO
+from typing import Optional
 
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -43,6 +44,7 @@ class FakeRepository:
         animal_id: str,
         photo_url: str,
         zone_label: str = "Area comum",
+        match_confidence: Optional[float] = None,
     ) -> dict[str, object]:
         if self.confirm_error is not None:
             raise self.confirm_error
@@ -52,6 +54,7 @@ class FakeRepository:
             "animal_id": animal_id,
             "photo_url": photo_url,
             "zone_label": zone_label,
+            "match_confidence": match_confidence,
         }
         self.confirm_existing_calls.append(call)
         return {"confirmed": True, "animalId": animal_id}
@@ -258,6 +261,7 @@ def test_confirm_sighting_existing_animal_returns_repository_result():
             "placeId": "place-1",
             "decision": "existing",
             "animalId": "animal-1",
+            "matchConfidence": 0.86,
             "photoUrl": "https://example.test/pet.png",
             "zoneLabel": "Jardim",
         },
@@ -272,6 +276,7 @@ def test_confirm_sighting_existing_animal_returns_repository_result():
             "animal_id": "animal-1",
             "photo_url": "https://example.test/pet.png",
             "zone_label": "Jardim",
+            "match_confidence": 0.86,
         }
     ]
 

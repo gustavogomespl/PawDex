@@ -305,6 +305,7 @@ def test_confirm_existing_animal_inserts_embedding_for_confirmed_sighting_animal
         animal_id="animal-mingau",
         photo_url="https://example.com/new-sighting.jpg",
         zone_label="Recepcao",
+        match_confidence=0.86,
     )
 
     sighting = insert_values_by_column(only_query_containing(connection, "insert into sightings"))
@@ -314,6 +315,7 @@ def test_confirm_existing_animal_inserts_embedding_for_confirmed_sighting_animal
     assert re.fullmatch(r"sighting-[0-9a-f]{12}", sighting["id"])
     assert sighting["animal_id"] == "animal-mingau"
     assert sighting["species"] == "cat"
+    assert sighting["match_confidence"] == 0.86
     assert animal_embedding["animal_id"] == sighting["animal_id"]
     assert animal_embedding["sighting_id"] == sighting["id"]
     assert animal_embedding["embedding"] is embedding

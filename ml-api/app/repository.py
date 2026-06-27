@@ -46,6 +46,7 @@ class PawDexRepository(Protocol):
         animal_id: str,
         photo_url: str,
         zone_label: str = "Area comum",
+        match_confidence: float | None = None,
     ) -> dict[str, Any]: ...
 
     def confirm_new_animal(
@@ -240,6 +241,7 @@ class PostgresPawDexRepository:
         animal_id: str,
         photo_url: str,
         zone_label: str = "Area comum",
+        match_confidence: float | None = None,
     ) -> dict[str, Any]:
         with self.pool.connection() as connection:
             pending = self._fetch_pending_analysis(connection, analysis_id, place_id)
@@ -258,7 +260,7 @@ class PostgresPawDexRepository:
                 zone_label=zone_label,
                 taken_at=now,
                 detector_confidence=pending["detector_confidence"],
-                match_confidence=None,
+                match_confidence=match_confidence,
             )
             self._insert_animal_embedding(
                 connection=connection,

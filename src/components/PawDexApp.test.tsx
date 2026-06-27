@@ -276,6 +276,7 @@ describe("PawDexApp", () => {
         decision: "existing",
         analysisId: "analysis-existing-1",
         animalId: "animal-mingau",
+        matchConfidence: 0.86,
         photoUrl: expect.stringContaining("data:image/png"),
         placeId: activePlaceId,
       }),

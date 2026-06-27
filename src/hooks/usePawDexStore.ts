@@ -121,6 +121,7 @@ export function usePawDexStore() {
         placeId: ACTIVE_PLACE_ID,
         decision: "existing",
         animalId: input.animalId,
+        matchConfidence: input.matchConfidence,
         photoUrl: input.photoUrl,
         zoneLabel: "Area comum",
       });
