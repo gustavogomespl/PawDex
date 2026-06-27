@@ -3,3 +3,6 @@
 .next/
 next-env.d.ts
 node_modules/
+ml-api/.venv/
+.pytest_cache/
+__pycache__/
