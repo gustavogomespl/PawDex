@@ -1,7 +1,7 @@
 INSERT INTO places (id, name, type, privacy_level, album_total_slots)
 VALUES
   ('place-office-centro', 'Escritorio Centro', 'office', 'invite-only', 12)
-ON CONFLICT DO NOTHING;
+ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO animals (
   id,
@@ -108,7 +108,7 @@ VALUES
     '2026-06-06T10:20:00.000Z',
     '2026-06-06T10:20:00.000Z'
   )
-ON CONFLICT DO NOTHING;
+ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO sightings (
   id,
@@ -166,4 +166,4 @@ VALUES
     0.79,
     'confirmed'
   )
-ON CONFLICT DO NOTHING;
+ON CONFLICT (id) DO NOTHING;
