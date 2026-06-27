@@ -73,6 +73,22 @@ class RecordingConnection:
             return FakeCursor(row={"id": self.pending_insert_id})
         if normalized.startswith("select * from pending_sighting_analyses"):
             return FakeCursor(row=self.pending_analysis)
+        if normalized.startswith("select id from animals"):
+            animal_id, place_id, species = params or (None, None, None)
+            animal = next(
+                (
+                    row
+                    for row in self.animals
+                    if row["id"] == animal_id
+                    and row["place_id"] == place_id
+                    and row["species"] == species
+                ),
+                None,
+            )
+            return FakeCursor(row=animal)
+        if normalized.startswith("delete from pending_sighting_analyses"):
+            self.pending_analysis = None
+            return FakeCursor()
         if "from animal_embeddings" in normalized and "join animals" in normalized:
             return FakeCursor(rows=self.match_rows)
         if normalized.startswith("select * from places"):
@@ -272,6 +288,72 @@ def test_confirm_existing_animal_updates_last_seen_and_primary_photo_url():
     assert update.params[1] == "https://example.com/fresh-photo.jpg"
 
 
+def test_confirm_existing_animal_consumes_pending_analysis_once():
+    connection = RecordingConnection(
+        pending_analysis=pending_analysis_row(species="cat"),
+        place=place_row(),
+        animals=[animal_row(id="animal-mingau")],
+        sightings=[sighting_row(animal_id="animal-mingau")],
+    )
+    repository = PostgresPawDexRepository(RecordingPool(connection))
+
+    repository.confirm_existing_animal(
+        analysis_id="analysis-1",
+        place_id="place-office",
+        animal_id="animal-mingau",
+        photo_url="https://example.com/first-confirmation.jpg",
+        zone_label="Recepcao",
+    )
+
+    pending_fetch = only_query_containing(
+        connection,
+        "select * from pending_sighting_analyses",
+    )
+    assert "FOR UPDATE" in pending_fetch.sql
+    assert only_query_containing(connection, "delete from pending_sighting_analyses")
+    first_sighting_insert_count = len(queries_containing(connection, "insert into sightings"))
+    with pytest.raises(ValueError, match="Pending sighting analysis not found."):
+        repository.confirm_existing_animal(
+            analysis_id="analysis-1",
+            place_id="place-office",
+            animal_id="animal-mingau",
+            photo_url="https://example.com/second-confirmation.jpg",
+            zone_label="Recepcao",
+        )
+
+    assert (
+        len(queries_containing(connection, "insert into sightings"))
+        == first_sighting_insert_count
+    )
+
+
+def test_confirm_existing_animal_rejects_place_or_species_mismatch_before_writes():
+    connection = RecordingConnection(
+        pending_analysis=pending_analysis_row(species="cat"),
+        place=place_row(),
+        animals=[animal_row(id="animal-mingau", species="dog")],
+    )
+    repository = PostgresPawDexRepository(RecordingPool(connection))
+
+    with pytest.raises(
+        ValueError,
+        match="Confirmed animal does not match pending analysis.",
+    ):
+        repository.confirm_existing_animal(
+            analysis_id="analysis-1",
+            place_id="place-office",
+            animal_id="animal-mingau",
+            photo_url="https://example.com/new-sighting.jpg",
+            zone_label="Recepcao",
+        )
+
+    validation = only_query_containing(connection, "select id from animals")
+    assert validation.params == ("animal-mingau", "place-office", "cat")
+    assert queries_containing(connection, "insert into sightings") == []
+    assert queries_containing(connection, "insert into animal_embeddings") == []
+    assert queries_containing(connection, "delete from pending_sighting_analyses") == []
+
+
 def test_confirm_new_animal_creates_animal_and_embedding_for_same_animal():
     embedding = [0.7, 0.8, 0.9]
     connection = RecordingConnection(
@@ -416,11 +498,17 @@ def test_postgres_repository_smoke_creates_pending_and_confirms_new_animal():
     finally:
         if pool_ready:
             with pool.connection() as connection:
-                if selected_animal_id is not None:
-                    connection.execute(
-                        "DELETE FROM animals WHERE id = %s AND place_id = %s",
-                        (selected_animal_id, place_id),
-                    )
+                connection.execute(
+                    """
+                    DELETE FROM animals
+                    WHERE place_id = %s
+                      AND (
+                        id = %s
+                        OR (display_name = %s AND primary_photo_url = %s)
+                      )
+                    """,
+                    (place_id, selected_animal_id, display_name, photo_url),
+                )
                 if analysis_id is not None:
                     connection.execute(
                         "DELETE FROM pending_sighting_analyses "

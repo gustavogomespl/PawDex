@@ -247,6 +247,7 @@ class PostgresPawDexRepository:
             sighting_id = _new_id("sighting")
             species = pending["species"]
 
+            self._validate_existing_animal(connection, animal_id, place_id, species)
             self._insert_sighting(
                 connection=connection,
                 sighting_id=sighting_id,
@@ -277,6 +278,7 @@ class PostgresPawDexRepository:
                 """,
                 (now, photo_url, animal_id, place_id, species),
             )
+            self._consume_pending_analysis(connection, analysis_id, place_id)
 
         return {
             "state": self.get_place_state(place_id),
@@ -343,6 +345,7 @@ class PostgresPawDexRepository:
                 sighting_id=sighting_id,
                 pending=pending,
             )
+            self._consume_pending_analysis(connection, analysis_id, place_id)
 
         return {
             "state": self.get_place_state(place_id),
@@ -360,12 +363,47 @@ class PostgresPawDexRepository:
             SELECT * FROM pending_sighting_analyses
             WHERE id = %s
               AND place_id = %s
+            FOR UPDATE
             """,
             (analysis_id, place_id),
         ).fetchone()
         if row is None:
             raise ValueError("Pending sighting analysis not found.")
         return row
+
+    def _validate_existing_animal(
+        self,
+        connection: Any,
+        animal_id: str,
+        place_id: str,
+        species: str,
+    ) -> None:
+        row = connection.execute(
+            """
+            SELECT id FROM animals
+            WHERE id = %s
+              AND place_id = %s
+              AND species = %s
+            """,
+            (animal_id, place_id, species),
+        ).fetchone()
+        if row is None:
+            raise ValueError("Confirmed animal does not match pending analysis.")
+
+    def _consume_pending_analysis(
+        self,
+        connection: Any,
+        analysis_id: str,
+        place_id: str,
+    ) -> None:
+        connection.execute(
+            """
+            DELETE FROM pending_sighting_analyses
+            WHERE id = %s
+              AND place_id = %s
+            """,
+            (analysis_id, place_id),
+        )
 
     def _insert_sighting(
         self,
