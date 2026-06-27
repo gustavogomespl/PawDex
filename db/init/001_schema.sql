@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS sightings (
   created_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (id, place_id),
   UNIQUE (id, place_id, species),
+  UNIQUE (id, place_id, animal_id),
   FOREIGN KEY (animal_id, place_id, species) REFERENCES animals(id, place_id, species) ON DELETE CASCADE
 );
 
@@ -66,7 +67,7 @@ CREATE TABLE IF NOT EXISTS animal_embeddings (
   quality_score double precision NOT NULL CHECK (quality_score BETWEEN 0 AND 1),
   created_at timestamptz NOT NULL DEFAULT now(),
   FOREIGN KEY (animal_id, place_id) REFERENCES animals(id, place_id) ON DELETE CASCADE,
-  FOREIGN KEY (sighting_id, place_id) REFERENCES sightings(id, place_id) ON DELETE CASCADE
+  FOREIGN KEY (sighting_id, place_id, animal_id) REFERENCES sightings(id, place_id, animal_id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS match_suggestions (
