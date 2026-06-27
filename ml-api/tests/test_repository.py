@@ -248,6 +248,30 @@ def test_confirm_existing_animal_inserts_embedding_for_confirmed_sighting_animal
     assert result["selectedAnimalId"] == "animal-mingau"
 
 
+def test_confirm_existing_animal_updates_last_seen_and_primary_photo_url():
+    connection = RecordingConnection(
+        pending_analysis=pending_analysis_row(species="cat"),
+        place=place_row(),
+        animals=[animal_row(id="animal-mingau")],
+        sightings=[sighting_row(animal_id="animal-mingau")],
+    )
+    repository = PostgresPawDexRepository(RecordingPool(connection))
+
+    repository.confirm_existing_animal(
+        analysis_id="analysis-1",
+        place_id="place-office",
+        animal_id="animal-mingau",
+        photo_url="https://example.com/fresh-photo.jpg",
+        zone_label="Recepcao",
+    )
+
+    update = only_query_containing(connection, "update animals")
+    assert "last_seen_at = %s" in update.sql
+    assert "primary_photo_url = %s" in update.sql
+    assert update.params is not None
+    assert update.params[1] == "https://example.com/fresh-photo.jpg"
+
+
 def test_confirm_new_animal_creates_animal_and_embedding_for_same_animal():
     embedding = [0.7, 0.8, 0.9]
     connection = RecordingConnection(
@@ -330,7 +354,7 @@ def test_confirm_existing_animal_raises_when_pending_analysis_is_missing():
 def test_postgres_repository_smoke_creates_pending_and_confirms_new_animal():
     numpy = pytest.importorskip("numpy", reason="Postgres smoke requires numpy.")
     psycopg = pytest.importorskip("psycopg", reason="Postgres smoke requires psycopg.")
-    psycopg_pool = pytest.importorskip(
+    pytest.importorskip(
         "psycopg_pool",
         reason="Postgres smoke requires psycopg_pool.",
     )
@@ -342,23 +366,25 @@ def test_postgres_repository_smoke_creates_pending_and_confirms_new_animal():
         "DATABASE_URL",
         "postgresql://pawdex:pawdex@127.0.0.1:5432/pawdex",
     )
-    pool = None
     try:
-        pool = create_pool(database_url)
-        repository = PostgresPawDexRepository(pool)
-        repository.healthcheck()
-    except (psycopg.OperationalError, psycopg_pool.PoolTimeout) as exc:
-        if pool is not None:
-            pool.close()
-        pytest.skip(f"Postgres smoke unavailable: {exc}")
+        with psycopg.connect(database_url, connect_timeout=2) as raw_connection:
+            raw_connection.execute("SELECT 1").fetchone()
+    except psycopg.OperationalError as exc:
+        pytest.skip(f"Postgres smoke unavailable: raw connection failed: {exc}")
 
     analysis_id: str | None = None
     selected_animal_id: str | None = None
     place_id = "place-office-centro"
     display_name = f"Smoke {uuid.uuid4().hex[:8]}"
     photo_url = f"https://example.com/{uuid.uuid4().hex}.jpg"
+    pool = create_pool(database_url)
+    pool_ready = False
 
     try:
+        pool.wait(timeout=5)
+        pool_ready = True
+        repository = PostgresPawDexRepository(pool)
+        repository.healthcheck()
         analysis_id = repository.create_pending_analysis(
             place_id=place_id,
             species="cat",
@@ -388,18 +414,19 @@ def test_postgres_repository_smoke_creates_pending_and_confirms_new_animal():
         assert selected["species"] == "cat"
         assert selected["primaryPhotoUrl"] == photo_url
     finally:
-        with pool.connection() as connection:
-            if selected_animal_id is not None:
-                connection.execute(
-                    "DELETE FROM animals WHERE id = %s AND place_id = %s",
-                    (selected_animal_id, place_id),
-                )
-            if analysis_id is not None:
-                connection.execute(
-                    "DELETE FROM pending_sighting_analyses "
-                    "WHERE id = %s AND place_id = %s",
-                    (analysis_id, place_id),
-                )
+        if pool_ready:
+            with pool.connection() as connection:
+                if selected_animal_id is not None:
+                    connection.execute(
+                        "DELETE FROM animals WHERE id = %s AND place_id = %s",
+                        (selected_animal_id, place_id),
+                    )
+                if analysis_id is not None:
+                    connection.execute(
+                        "DELETE FROM pending_sighting_analyses "
+                        "WHERE id = %s AND place_id = %s",
+                        (analysis_id, place_id),
+                    )
         pool.close()
 
 

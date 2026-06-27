@@ -269,12 +269,13 @@ class PostgresPawDexRepository:
             connection.execute(
                 """
                 UPDATE animals
-                SET last_seen_at = %s
+                SET last_seen_at = %s,
+                    primary_photo_url = %s
                 WHERE id = %s
                   AND place_id = %s
                   AND species = %s
                 """,
-                (now, animal_id, place_id, species),
+                (now, photo_url, animal_id, place_id, species),
             )
 
         return {
