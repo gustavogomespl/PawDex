@@ -1,0 +1,11 @@
+.git
+.next
+.superpowers
+.worktrees
+node_modules
+next-env.d.ts
+coverage
+ml-api/.pytest_cache
+ml-api/.venv
+ml-api/__pycache__
+ml-api/**/__pycache__
