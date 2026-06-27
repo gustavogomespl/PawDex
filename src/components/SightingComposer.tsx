@@ -38,6 +38,7 @@ export function SightingComposer({
   onWarning,
 }: SightingComposerProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const analysisRequestIdRef = useRef(0);
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [imageSize, setImageSize] = useState<{
@@ -143,6 +144,8 @@ export function SightingComposer({
   }
 
   async function runDetection(file: File) {
+    const requestId = analysisRequestIdRef.current + 1;
+    analysisRequestIdRef.current = requestId;
     setDetectionStatus("loading");
     setDetectionMessage("Analisando imagem...");
     setBestDetection(null);
@@ -152,6 +155,11 @@ export function SightingComposer({
 
     try {
       const response = await analyzePetSighting(file, placeId);
+
+      if (requestId !== analysisRequestIdRef.current) {
+        return;
+      }
+
       setAnalysisId(response.analysisId);
       setMatches(response.matches);
       setRecommendation(response.recommendation);
@@ -171,6 +179,10 @@ export function SightingComposer({
         )}`,
       );
     } catch {
+      if (requestId !== analysisRequestIdRef.current) {
+        return;
+      }
+
       setDetectionStatus("error");
       setDetectionMessage("Nao foi possivel analisar a imagem agora.");
       onWarning("Nao foi possivel analisar a imagem agora.");
@@ -238,7 +250,10 @@ export function SightingComposer({
       {photoUrl ? (
         <div className="match-panel">
           {detectionMessage ? (
-            <p className={`detection-status detection-status--${detectionStatus}`}>
+            <p
+              aria-live="polite"
+              className={`detection-status detection-status--${detectionStatus}`}
+            >
               {detectionMessage}
             </p>
           ) : null}
@@ -338,7 +353,7 @@ function formatRecommendation(
     )} de similaridade.`;
   }
 
-  return "Nenhum gato ou cachorro detectado.";
+  return "Possivel match encontrado. Revise antes de confirmar.";
 }
 
 function getDetectionBoxStyle(

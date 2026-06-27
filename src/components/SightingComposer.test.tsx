@@ -1,7 +1,8 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { analyzePetSighting } from "@/domain/matching/client";
+import type { AnalyzeSightingResponse } from "@/domain/matching/types";
 import { SightingComposer } from "./SightingComposer";
 
 vi.mock("@/domain/matching/client", () => ({
@@ -173,11 +174,12 @@ describe("SightingComposer", () => {
     ).toBeInTheDocument();
   });
 
-  it("keeps manual flow available when matching fails", async () => {
+  it("keeps the form visible but does not create a new animal when matching fails", async () => {
     const user = userEvent.setup();
     const onWarning = vi.fn();
+    const onCreateNew = vi.fn();
     analyzePetSightingMock.mockRejectedValue(new Error("offline"));
-    renderComposer({ onWarning });
+    renderComposer({ onCreateNew, onWarning });
 
     await user.upload(
       screen.getByLabelText(/enviar imagem/i),
@@ -191,6 +193,14 @@ describe("SightingComposer", () => {
     expect(onWarning).toHaveBeenCalledWith(
       "Nao foi possivel analisar a imagem agora.",
     );
+
+    await user.type(screen.getByLabelText(/nome do animal/i), "Nina");
+    await user.click(screen.getByRole("button", { name: /cadastrar novo/i }));
+
+    expect(onWarning).toHaveBeenCalledWith(
+      "Analise a foto antes de confirmar o avistamento.",
+    );
+    expect(onCreateNew).not.toHaveBeenCalled();
   });
 
   it("shows probably-new recommendation text when there are no matches", async () => {
@@ -216,6 +226,32 @@ describe("SightingComposer", () => {
 
     expect(
       await screen.findByText("Parece ser um animal novo neste local."),
+    ).toBeInTheDocument();
+  });
+
+  it("shows a neutral possible-existing fallback when no first match is returned", async () => {
+    const user = userEvent.setup();
+    analyzePetSightingMock.mockResolvedValue({
+      analysisId: "analysis-possible-empty",
+      detection: {
+        species: "cat",
+        label: "cat",
+        confidence: 0.79,
+        box: { x1: 2, y1: 3, x2: 42, y2: 52 },
+      },
+      embedding: { modelVersion: "clip-test", qualityScore: 0.73 },
+      matches: [],
+      recommendation: "possible_existing",
+    });
+    renderComposer();
+
+    await user.upload(
+      screen.getByLabelText(/enviar imagem/i),
+      new File(["pet"], "pet.png", { type: "image/png" }),
+    );
+
+    expect(
+      await screen.findByText("Possivel match encontrado. Revise antes de confirmar."),
     ).toBeInTheDocument();
   });
 
@@ -256,5 +292,97 @@ describe("SightingComposer", () => {
       }),
       placeId,
     );
+  });
+
+  it("ignores stale analysis responses when a newer image finishes first", async () => {
+    const user = userEvent.setup();
+    const onAddToExisting = vi.fn();
+    let resolveFirst: (response: AnalyzeSightingResponse) => void = () => {};
+    let resolveSecond: (response: AnalyzeSightingResponse) => void = () => {};
+    const firstAnalysis = new Promise<AnalyzeSightingResponse>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const secondAnalysis = new Promise<AnalyzeSightingResponse>((resolve) => {
+      resolveSecond = resolve;
+    });
+    analyzePetSightingMock
+      .mockReturnValueOnce(firstAnalysis)
+      .mockReturnValueOnce(secondAnalysis);
+    renderComposer({ onAddToExisting });
+
+    const input = screen.getByLabelText(/enviar imagem/i);
+    fireEvent.change(input, {
+      target: {
+        files: [new File(["first"], "first.png", { type: "image/png" })],
+      },
+    });
+    await waitFor(() => expect(analyzePetSightingMock).toHaveBeenCalledTimes(1));
+
+    fireEvent.change(input, {
+      target: {
+        files: [new File(["second"], "second.png", { type: "image/png" })],
+      },
+    });
+    await waitFor(() => expect(analyzePetSightingMock).toHaveBeenCalledTimes(2));
+
+    resolveSecond!({
+      analysisId: "analysis-second",
+      detection: {
+        species: "cat",
+        label: "cat",
+        confidence: 0.93,
+        box: { x1: 1, y1: 2, x2: 40, y2: 50 },
+      },
+      embedding: { modelVersion: "clip-test", qualityScore: 0.9 },
+      matches: [
+        {
+          animalId: "animal-second",
+          displayName: "Second",
+          species: "cat",
+          primaryPhotoUrl: "/second.png",
+          score: 0.92,
+        },
+      ],
+      recommendation: "possible_existing",
+    });
+
+    expect(
+      await screen.findByText("Parece ser Second, 92% de similaridade."),
+    ).toBeInTheDocument();
+
+    resolveFirst!({
+      analysisId: "analysis-first",
+      detection: {
+        species: "dog",
+        label: "dog",
+        confidence: 0.88,
+        box: { x1: 5, y1: 6, x2: 70, y2: 80 },
+      },
+      embedding: { modelVersion: "clip-test", qualityScore: 0.7 },
+      matches: [
+        {
+          animalId: "animal-first",
+          displayName: "First",
+          species: "dog",
+          primaryPhotoUrl: "/first.png",
+          score: 0.81,
+        },
+      ],
+      recommendation: "possible_existing",
+    });
+
+    await waitFor(() =>
+      expect(screen.queryByText(/Parece ser First/)).not.toBeInTheDocument(),
+    );
+    await user.click(
+      screen.getByRole("button", { name: /confirmar como second/i }),
+    );
+
+    expect(onAddToExisting).toHaveBeenCalledWith({
+      analysisId: "analysis-second",
+      animalId: "animal-second",
+      photoUrl: expect.stringContaining("data:image/png"),
+      matchConfidence: 0.92,
+    });
   });
 });
