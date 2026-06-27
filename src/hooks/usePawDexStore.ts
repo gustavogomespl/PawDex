@@ -9,7 +9,6 @@ import {
   getPlaceProgress,
   getSightingsForAnimal,
 } from "@/domain/pawdex/album";
-import { demoState } from "@/domain/pawdex/seed";
 import { loadPawDexState, savePawDexState } from "@/domain/pawdex/storage";
 import type { PawDexState, Species } from "@/domain/pawdex/types";
 
@@ -30,8 +29,8 @@ export type NewAnimalInput = {
 };
 
 export function usePawDexStore() {
-  const [state, setState] = useState<PawDexState>(demoState);
-  const [hasLoadedStoredState, setHasLoadedStoredState] = useState(false);
+  const [state, setState] = useState<PawDexState | null>(null);
+  const [hasLoadedInitialState, setHasLoadedInitialState] = useState(false);
   const [warning, setWarning] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [selectedAnimalId, setSelectedAnimalId] = useState<string | null>(
@@ -76,7 +75,7 @@ export function usePawDexStore() {
         setWarning(formatRemoteLoadWarning(result.warning));
       } finally {
         if (isMounted) {
-          setHasLoadedStoredState(true);
+          setHasLoadedInitialState(true);
         }
       }
     }
@@ -89,7 +88,7 @@ export function usePawDexStore() {
   }, []);
 
   useEffect(() => {
-    if (!hasLoadedStoredState) {
+    if (!hasLoadedInitialState || !state) {
       return;
     }
 
@@ -98,16 +97,20 @@ export function usePawDexStore() {
     if (saveWarning) {
       setWarning(saveWarning);
     }
-  }, [hasLoadedStoredState, state]);
+  }, [hasLoadedInitialState, state]);
 
-  const place = state.places.find((candidate) => candidate.id === ACTIVE_PLACE_ID);
-  const progress = getPlaceProgress(state, ACTIVE_PLACE_ID);
-  const albumSlots = getAlbumSlots(state, ACTIVE_PLACE_ID);
-  const animals = getAnimalsForPlace(state, ACTIVE_PLACE_ID);
-  const latestSightings = getLatestSightings(state, ACTIVE_PLACE_ID, 5);
+  const place = state?.places.find((candidate) => candidate.id === ACTIVE_PLACE_ID);
+  const progress = state
+    ? getPlaceProgress(state, ACTIVE_PLACE_ID)
+    : { discovered: 0, total: 0 };
+  const albumSlots = state ? getAlbumSlots(state, ACTIVE_PLACE_ID) : [];
+  const animals = state ? getAnimalsForPlace(state, ACTIVE_PLACE_ID) : [];
+  const latestSightings = state
+    ? getLatestSightings(state, ACTIVE_PLACE_ID, 5)
+    : [];
   const selectedAnimal =
     animals.find((animal) => animal.id === selectedAnimalId) ?? animals[0] ?? null;
-  const selectedAnimalSightings = selectedAnimal
+  const selectedAnimalSightings = state && selectedAnimal
     ? getSightingsForAnimal(state, selectedAnimal.id)
     : [];
 
@@ -155,6 +158,7 @@ export function usePawDexStore() {
   }
 
   return {
+    isLoadingInitialState: !hasLoadedInitialState,
     place,
     progress,
     albumSlots,

@@ -12,6 +12,14 @@ export function PawDexApp() {
   const [isComposing, setIsComposing] = useState(false);
   const store = usePawDexStore();
 
+  if (store.isLoadingInitialState) {
+    return (
+      <main className="app-shell">
+        <p>Carregando PawDex...</p>
+      </main>
+    );
+  }
+
   if (!store.place) {
     return (
       <main className="app-shell">

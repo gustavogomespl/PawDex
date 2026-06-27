@@ -20,6 +20,17 @@ function jsonResponse(body: unknown, ok = true) {
   };
 }
 
+function deferred<T>() {
+  let resolve: (value: T) => void = () => {};
+  let reject: (reason?: unknown) => void = () => {};
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+
+  return { promise, resolve, reject };
+}
+
 function createFetchRouter() {
   const calls: FetchCall[] = [];
   const handlers = new Map<
@@ -140,17 +151,31 @@ describe("PawDexApp", () => {
 
   it("loads PawDex state from the API before showing the album", async () => {
     const router = createFetchRouter();
-    stubStateLoad(router, demoState);
+    const remoteStateLoad = deferred<PawDexState>();
+    router.on("/api/pawdex/state", async () =>
+      jsonResponse(await remoteStateLoad.promise),
+    );
 
     render(<PawDexApp />);
+
+    expect(screen.getByText("Carregando PawDex...")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Escritorio Centro" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Mingau")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /registrar avistamento/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      router.fetchMock,
+    ).toHaveBeenCalledWith(`/api/pawdex/state?placeId=${activePlaceId}`);
+
+    remoteStateLoad.resolve(demoState);
 
     expect(
       await screen.findByRole("heading", { name: "Escritorio Centro" }),
     ).toBeInTheDocument();
     expect(screen.getAllByText("Mingau").length).toBeGreaterThan(0);
-    expect(router.fetchMock).toHaveBeenCalledWith(
-      `/api/pawdex/state?placeId=${activePlaceId}`,
-    );
   });
 
   it("uses local storage when remote state fetch fails", async () => {
