@@ -1,5 +1,8 @@
 import math
 import sys
+import threading
+import time
+import types
 from contextlib import nullcontext
 
 import numpy as np
@@ -217,6 +220,79 @@ def test_torchvision_embedder_rejects_wrong_raw_model_output_shape():
 
     with pytest.raises(ValueError, match="Expected embedding shape"):
         embedder.embed(Image.new("RGB", (224, 224), "white"))
+
+
+def test_torchvision_embedder_initializes_lazy_model_once_for_concurrent_first_use(
+    monkeypatch,
+):
+    calls = 0
+    first_call_started = threading.Event()
+    release_first_call = threading.Event()
+    lock = threading.Lock()
+
+    class FakeWeights:
+        IMAGENET1K_V1 = None
+
+        @staticmethod
+        def transforms():
+            return FakeTransforms()
+
+    FakeWeights.IMAGENET1K_V1 = FakeWeights()
+
+    class FakeIdentity:
+        pass
+
+    class FakeLoadedModel:
+        classifier = None
+
+        def eval(self):
+            return None
+
+    def mobilenet_v3_small(weights):
+        nonlocal calls
+        assert weights is FakeWeights.IMAGENET1K_V1
+        with lock:
+            calls += 1
+            first_call_started.set()
+        release_first_call.wait(timeout=1)
+        return FakeLoadedModel()
+
+    torch_module = types.ModuleType("torch")
+    torch_module.nn = types.SimpleNamespace(Identity=FakeIdentity)
+    torchvision_module = types.ModuleType("torchvision")
+    torchvision_models_module = types.ModuleType("torchvision.models")
+    torchvision_models_module.MobileNet_V3_Small_Weights = FakeWeights
+    torchvision_models_module.mobilenet_v3_small = mobilenet_v3_small
+
+    monkeypatch.setitem(sys.modules, "torch", torch_module)
+    monkeypatch.setitem(sys.modules, "torchvision", torchvision_module)
+    monkeypatch.setitem(sys.modules, "torchvision.models", torchvision_models_module)
+
+    embedder = TorchvisionMobileNetEmbedder()
+    start = threading.Event()
+    errors = []
+
+    def initialize():
+        start.wait(timeout=1)
+        try:
+            embedder._ensure_model()
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=initialize) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+
+    start.set()
+    assert first_call_started.wait(timeout=1)
+    time.sleep(0.05)
+    release_first_call.set()
+
+    for thread in threads:
+        thread.join(timeout=1)
+
+    assert errors == []
+    assert calls == 1
 
 
 class FakeTorch:

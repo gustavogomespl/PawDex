@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import threading
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -92,6 +93,7 @@ def normalize_vector(vector: np.ndarray) -> np.ndarray:
 
 class TorchvisionMobileNetEmbedder:
     def __init__(self) -> None:
+        self._model_lock = threading.Lock()
         self._torch = None
         self._model = None
         self._transforms = None
@@ -112,7 +114,7 @@ class TorchvisionMobileNetEmbedder:
         vector = raw_vector.reshape(EMBEDDING_DIMENSION)
 
         return EmbeddingResult(
-            vector=normalize_vector(vector),
+            vector=vector,
             model_version=MODEL_VERSION,
             quality_score=estimate_quality_score(rgb_image),
         )
@@ -125,17 +127,29 @@ class TorchvisionMobileNetEmbedder:
         ):
             return self._torch, self._model, self._transforms
 
-        import torch
-        from torchvision.models import MobileNet_V3_Small_Weights, mobilenet_v3_small
+        with self._model_lock:
+            if (
+                self._torch is not None
+                and self._model is not None
+                and self._transforms is not None
+            ):
+                return self._torch, self._model, self._transforms
 
-        weights = MobileNet_V3_Small_Weights.IMAGENET1K_V1
-        model = mobilenet_v3_small(weights=weights)
-        model.classifier = torch.nn.Identity()
-        model.eval()
+            import torch
+            from torchvision.models import (
+                MobileNet_V3_Small_Weights,
+                mobilenet_v3_small,
+            )
 
-        self._torch = torch
-        self._model = model
-        self._transforms = weights.transforms()
+            weights = MobileNet_V3_Small_Weights.IMAGENET1K_V1
+            model = mobilenet_v3_small(weights=weights)
+            model.classifier = torch.nn.Identity()
+            model.eval()
+
+            self._torch = torch
+            self._model = model
+            self._transforms = weights.transforms()
+
         return self._torch, self._model, self._transforms
 
 
