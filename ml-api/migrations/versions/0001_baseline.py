@@ -1,3 +1,26 @@
+"""baseline schema
+
+Revision ID: 0001_baseline
+Revises:
+Create Date: 2026-06-27
+
+Mirror of db/init/001_schema.sql. db/init is only the fast-path bootstrap for a
+fresh Docker volume; this migration is the schema source of truth everywhere else
+(e.g. managed Postgres with no init scripts). It uses IF NOT EXISTS so it is a safe
+no-op when db/init already created the schema.
+
+Do NOT change schema by editing this file or 001_schema.sql — add a NEW migration.
+tests/test_migrations.py fails if the two drift apart.
+"""
+from alembic import op
+
+revision = "0001_baseline"
+down_revision = None
+branch_labels = None
+depends_on = None
+
+
+SCHEMA_SQL = """
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
@@ -86,11 +109,27 @@ CREATE TABLE IF NOT EXISTS match_suggestions (
 CREATE INDEX IF NOT EXISTS animals_place_id_idx ON animals(place_id);
 CREATE INDEX IF NOT EXISTS sightings_place_id_taken_at_idx ON sightings(place_id, taken_at DESC);
 CREATE INDEX IF NOT EXISTS animal_embeddings_place_animal_idx ON animal_embeddings(place_id, animal_id);
-
--- Support ON DELETE CASCADE lookups and the pending-analysis TTL sweep so deletes
--- and cleanup do not fall back to sequential scans as data grows.
 CREATE INDEX IF NOT EXISTS sightings_animal_id_idx ON sightings(animal_id);
 CREATE INDEX IF NOT EXISTS animal_embeddings_sighting_id_idx ON animal_embeddings(sighting_id);
 CREATE INDEX IF NOT EXISTS pending_analyses_place_id_idx ON pending_sighting_analyses(place_id);
 CREATE INDEX IF NOT EXISTS pending_analyses_created_at_idx ON pending_sighting_analyses(created_at);
 CREATE INDEX IF NOT EXISTS match_suggestions_place_id_idx ON match_suggestions(place_id);
+"""
+
+
+DROP_SQL = """
+DROP TABLE IF EXISTS match_suggestions CASCADE;
+DROP TABLE IF EXISTS animal_embeddings CASCADE;
+DROP TABLE IF EXISTS pending_sighting_analyses CASCADE;
+DROP TABLE IF EXISTS sightings CASCADE;
+DROP TABLE IF EXISTS animals CASCADE;
+DROP TABLE IF EXISTS places CASCADE;
+"""
+
+
+def upgrade() -> None:
+    op.execute(SCHEMA_SQL)
+
+
+def downgrade() -> None:
+    op.execute(DROP_SQL)

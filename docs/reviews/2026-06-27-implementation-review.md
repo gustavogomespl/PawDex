@@ -98,7 +98,9 @@ Corrigir os defeitos confirmados de maior raio de impacto:
 8. **a11y/pt-BR** (`role="alert"`/`aria-live`; rótulos de status em pt-BR) e **remover código morto** (ou ligar o offline de verdade).
 
 ### Fase B — Fundação de produção e migração (pré-requisito do resto)
-- **Ferramenta de migração** (Alembic/sqitch) — fazer **antes** da Fase C, senão cada tabela nova exige apagar o volume.
+> 🟡 **Quase completa — 2026-06-27.** ✅ Concluído e verificado: build de produção do web (Docker standalone multi-stage, non-root, headers de segurança — **imagem buildada, `node server.js` servindo HTTP 200**); `.env`/secrets + rede fechada (db/ml-api só `expose` internos, só web publica `:3000` — `docker compose config` válido); `restart` + limites de memória + healthcheck do web; pré-embute `yolo11n.pt` + `requirements-dev.txt` + `ml-api/.dockerignore`; CORS via env (pytest); auto-limpeza TTL de `pending_sighting_analyses` + índices FK-cascade/`created_at` (validados em pgvector real); CI GitHub Actions; **Alembic (migração)** — baseline espelhando o schema, `env.py` lê `DATABASE_URL`, entrypoint do ml-api roda `alembic upgrade head`, teste anti-drift (**validado em pgvector real: upgrade/downgrade/idempotência + coexistência com `db/init`**). ⏳ **Resta só: object storage (MinIO)** — o maior; será feito junto com o crop-only da Fase D.
+
+- ✅ **Ferramenta de migração (Alembic)** — feita. Baseline = `ml-api/migrations/versions/0001_baseline.py` (espelha `db/init/001_schema.sql`; teste anti-drift `ml-api/tests/test_migrations.py`). `db/init` continua como bootstrap rápido do volume Docker; **schema novo daqui pra frente = nova migração Alembic** (nunca editar o baseline/001). Entrypoint `ml-api/entrypoint.sh` aplica migrações antes do uvicorn.
 - **Object storage** (MinIO como 4º serviço, ou S3/R2): guardar URL/chave em vez de base64.
 - **Build de produção do web** (`output: "standalone"` + multi-stage `next build` + `node server.js`, `NODE_ENV=production`) — bloqueador único de deploy, baixo esforço.
 - **Secrets + rede:** tirar `pawdex:pawdex` para `.env`/secrets; **parar de publicar** `db:5432` e `ml-api:8000` no host (só rede interna; expor só `web`).

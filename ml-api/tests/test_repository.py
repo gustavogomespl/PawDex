@@ -267,6 +267,28 @@ def test_get_place_state_returns_frontend_state_and_album_slots():
     ]
 
 
+def test_get_place_state_expands_album_slots_when_animals_exceed_configured_total():
+    animals = [
+        animal_row(id=f"animal-{index:02d}", display_name=f"Animal {index}")
+        for index in range(1, 14)
+    ]
+    connection = RecordingConnection(
+        place=place_row(album_total_slots=12),
+        animals=animals,
+    )
+    repository = PostgresPawDexRepository(RecordingPool(connection))
+
+    state = repository.get_place_state("place-office")
+
+    assert len(state["albumSlots"]) == 13
+    assert state["albumSlots"][-1] == {
+        "slotNumber": 13,
+        "placeId": "place-office",
+        "animalId": "animal-13",
+        "isDiscovered": True,
+    }
+
+
 def test_create_pending_analysis_inserts_parameterized_row_and_returns_id():
     embedding = [0.1, 0.2, 0.3]
     connection = RecordingConnection(pending_insert_id="analysis-123")
@@ -289,6 +311,25 @@ def test_create_pending_analysis_inserts_parameterized_row_and_returns_id():
     assert values["species"] == "cat"
     assert values["embedding"] is embedding
     assert "%s" in insert.sql
+
+
+def test_create_pending_analysis_purges_stale_rows_before_insert():
+    connection = RecordingConnection(pending_insert_id="analysis-123")
+    repository = PostgresPawDexRepository(RecordingPool(connection))
+
+    repository.create_pending_analysis(
+        place_id="place-office",
+        species="cat",
+        detector_confidence=0.91,
+        detection_box={"x1": 1, "y1": 2, "x2": 10, "y2": 12},
+        model_version="mobilenet-v3",
+        embedding=[0.1, 0.2, 0.3],
+        quality_score=0.82,
+    )
+
+    purge = only_query_containing(connection, "delete from pending_sighting_analyses")
+    assert "created_at < %s" in purge.sql
+    assert purge.params is not None and len(purge.params) == 1
 
 
 def test_confirm_existing_animal_inserts_embedding_for_confirmed_sighting_animal():

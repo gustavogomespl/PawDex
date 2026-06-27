@@ -7,3 +7,5 @@ node_modules/
 ml-api/.venv/
 .pytest_cache/
 __pycache__/
+.env
+!.env.example

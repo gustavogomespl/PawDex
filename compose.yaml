@@ -1,31 +1,40 @@
 services:
   db:
     image: pgvector/pgvector:pg18-trixie
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: pawdex
-      POSTGRES_PASSWORD: pawdex
-      POSTGRES_DB: pawdex
+      POSTGRES_USER: ${POSTGRES_USER:-pawdex}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pawdex_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-pawdex}
       PGDATA: /var/lib/postgresql/data
     volumes:
       - pawdex-db-data:/var/lib/postgresql/data
       - ./db/init:/docker-entrypoint-initdb.d:ro
-    ports:
-      - "5432:5432"
+    # Not published to the host: reachable only on the internal compose network.
+    expose:
+      - "5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U pawdex -d pawdex"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pawdex} -d ${POSTGRES_DB:-pawdex}"]
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512m
 
   ml-api:
     build:
       context: ./ml-api
+    restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://pawdex:pawdex@db:5432/pawdex
+      DATABASE_URL: postgresql://${POSTGRES_USER:-pawdex}:${POSTGRES_PASSWORD:-pawdex_dev_password}@db:5432/${POSTGRES_DB:-pawdex}
       PAWDEX_YOLO_MODEL: ${PAWDEX_YOLO_MODEL:-yolo11n.pt}
       PAWDEX_YOLO_CONFIDENCE: ${PAWDEX_YOLO_CONFIDENCE:-0.35}
-    ports:
-      - "8000:8000"
+      PAWDEX_ALLOWED_ORIGINS: ${PAWDEX_ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+    # Reachable only via the Next.js proxy on the internal network, never the host.
+    expose:
+      - "8000"
     depends_on:
       db:
         condition: service_healthy
@@ -34,17 +43,30 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 4g
 
   web:
     build:
       context: .
+    restart: unless-stopped
     environment:
       ML_API_URL: http://ml-api:8000
+      NODE_ENV: production
     ports:
       - "3000:3000"
     depends_on:
       ml-api:
         condition: service_healthy
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - "node -e \"fetch('http://localhost:3000/').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   pawdex-db-data:

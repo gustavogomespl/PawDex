@@ -456,6 +456,44 @@ def test_blocking_endpoints_run_in_threadpool_not_event_loop():
         )
 
 
+def test_cors_allows_origin_configured_via_env(monkeypatch):
+    monkeypatch.setenv("PAWDEX_ALLOWED_ORIGINS", "https://pawdex.example")
+    app = create_app(
+        detector_factory=lambda: FakeDetector(DetectionResponse([], None)),
+        repository_factory=lambda: FakeRepository(),
+    )
+    client = TestClient(app)
+
+    response = client.options(
+        "/health",
+        headers={
+            "Origin": "https://pawdex.example",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    assert response.headers.get("access-control-allow-origin") == "https://pawdex.example"
+
+
+def test_cors_rejects_unconfigured_origin(monkeypatch):
+    monkeypatch.setenv("PAWDEX_ALLOWED_ORIGINS", "https://pawdex.example")
+    app = create_app(
+        detector_factory=lambda: FakeDetector(DetectionResponse([], None)),
+        repository_factory=lambda: FakeRepository(),
+    )
+    client = TestClient(app)
+
+    response = client.options(
+        "/health",
+        headers={
+            "Origin": "https://evil.example",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    assert "access-control-allow-origin" not in response.headers
+
+
 def test_detect_rejects_oversized_upload(monkeypatch):
     monkeypatch.setattr("app.main.MAX_UPLOAD_BYTES", 4)
     detector = FakeDetector(DetectionResponse([], None))

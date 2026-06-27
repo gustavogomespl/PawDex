@@ -2,8 +2,13 @@ from __future__ import annotations
 
 import secrets
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
+
+
+# Abandoned analyses (user never confirmed) are purged opportunistically so the
+# table cannot grow unbounded without an external scheduler.
+PENDING_ANALYSIS_TTL = timedelta(hours=24)
 
 
 @dataclass(frozen=True)
@@ -140,7 +145,7 @@ class PostgresPawDexRepository:
             return {"places": [], "animals": [], "sightings": [], "albumSlots": []}
 
         animal_ids = [row["id"] for row in animals]
-        total_slots = int(place["album_total_slots"])
+        total_slots = max(int(place["album_total_slots"]), len(animal_ids))
         album_slots = [
             {
                 "slotNumber": index + 1,
@@ -220,6 +225,10 @@ class PostgresPawDexRepository:
             RETURNING id
         """
         with self.pool.connection() as connection:
+            connection.execute(
+                "DELETE FROM pending_sighting_analyses WHERE created_at < %s",
+                (datetime.now(timezone.utc) - PENDING_ANALYSIS_TTL,),
+            )
             row = connection.execute(
                 sql,
                 (
