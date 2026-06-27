@@ -53,9 +53,21 @@ describe("GET /api/pawdex/state", () => {
     );
   });
 
-  it("returns 400 when the request does not include a place id", async () => {
+  it("returns 400 when the request has a blank place id", async () => {
     const response = await GET(
       new Request("http://localhost/api/pawdex/state?placeId=   "),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      ...emptyState,
+      error: "Local obrigatorio.",
+    });
+  });
+
+  it("returns 400 when the request does not include a place id", async () => {
+    const response = await GET(
+      new Request("http://localhost/api/pawdex/state"),
     );
 
     expect(response.status).toBe(400);

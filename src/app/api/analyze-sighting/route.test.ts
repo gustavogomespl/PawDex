@@ -90,10 +90,25 @@ describe("POST /api/analyze-sighting", () => {
     expect(await response.json()).toEqual(emptyAnalyzeBody("Imagem obrigatoria."));
   });
 
-  it("returns 400 when the browser request does not include a place id", async () => {
+  it("returns 400 when the browser request has a blank place id", async () => {
     const formData = new FormData();
     formData.set("file", new File(["pet"], "pet.png", { type: "image/png" }));
     formData.set("placeId", "   ");
+
+    const response = await POST(
+      new Request("http://localhost/api/analyze-sighting", {
+        method: "POST",
+        body: formData,
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual(emptyAnalyzeBody("Local obrigatorio."));
+  });
+
+  it("returns 400 when the browser request does not include a place id", async () => {
+    const formData = new FormData();
+    formData.set("file", new File(["pet"], "pet.png", { type: "image/png" }));
 
     const response = await POST(
       new Request("http://localhost/api/analyze-sighting", {
