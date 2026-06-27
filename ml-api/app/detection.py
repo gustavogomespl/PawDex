@@ -7,6 +7,11 @@ from typing import Protocol
 
 from PIL import Image, UnidentifiedImageError
 
+# Cap decoded image dimensions to defend against decompression bombs. PIL emits a
+# DecompressionBombError when an image exceeds twice this pixel count.
+MAX_IMAGE_PIXELS = 40_000_000
+Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
+
 
 @dataclass(frozen=True)
 class BoundingBox:
@@ -69,7 +74,7 @@ def load_image(image_bytes: bytes) -> Image.Image:
         image = Image.open(BytesIO(image_bytes))
         image.load()
         return image.convert("RGB")
-    except (UnidentifiedImageError, OSError) as exc:
+    except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as exc:
         raise ValueError("Unsupported or invalid image file.") from exc
 
 

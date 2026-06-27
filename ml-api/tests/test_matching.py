@@ -164,6 +164,7 @@ def test_pending_call_includes_detection_and_embedding_metadata():
             "place_id": "place-park",
             "species": "dog",
             "embedding": embedder.result.vector,
+            "model_version": MODEL_VERSION,
             "limit": 3,
         }
     ]
@@ -254,6 +255,7 @@ class RecordingRepository:
         place_id: str,
         species: str,
         embedding: Any,
+        model_version: str,
         limit: int = 3,
     ) -> list[MatchCandidate]:
         self.find_match_calls.append(
@@ -261,6 +263,7 @@ class RecordingRepository:
                 "place_id": place_id,
                 "species": species,
                 "embedding": embedding,
+                "model_version": model_version,
                 "limit": limit,
             }
         )

@@ -16,6 +16,16 @@ if TYPE_CHECKING:
     from app.matching import AnalyzeSightingService
     from app.repository import PawDexRepository
 
+# Reject uploads larger than this before reading them into the detection pipeline.
+MAX_UPLOAD_BYTES = 8 * 1024 * 1024
+
+
+def read_upload_within_limit(file: UploadFile) -> bytes:
+    image_bytes = file.file.read()
+    if len(image_bytes) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Image file is too large.")
+    return image_bytes
+
 
 class ConfirmSightingRequest(BaseModel):
     analysis_id: str = Field(alias="analysisId")
@@ -123,15 +133,15 @@ def create_app(
         return app.state.analyze_service
 
     @app.get("/health")
-    async def health() -> dict[str, str]:
+    def health() -> dict[str, str]:
         response = {"status": "ok", "model": "configured"}
         get_repository().healthcheck()
         response["database"] = "connected"
         return response
 
     @app.post("/detect")
-    async def detect(file: UploadFile = File(...)) -> dict[str, object]:
-        image_bytes = await file.read()
+    def detect(file: UploadFile = File(...)) -> dict[str, object]:
+        image_bytes = read_upload_within_limit(file)
         try:
             image = load_image(image_bytes)
         except ValueError as exc:
@@ -146,15 +156,15 @@ def create_app(
         }
 
     @app.get("/places/{place_id}/state")
-    async def place_state(place_id: str) -> dict[str, object]:
+    def place_state(place_id: str) -> dict[str, object]:
         return get_repository().get_place_state(place_id)
 
     @app.post("/analyze-sighting")
-    async def analyze_sighting(
+    def analyze_sighting(
         place_id: str = Form(...),
         file: UploadFile = File(...),
     ) -> dict[str, object]:
-        image_bytes = await file.read()
+        image_bytes = read_upload_within_limit(file)
         try:
             image = load_image(image_bytes)
         except ValueError as exc:
@@ -163,7 +173,7 @@ def create_app(
         return get_analyze_service().analyze(image, place_id)
 
     @app.post("/confirm-sighting")
-    async def confirm_sighting(
+    def confirm_sighting(
         payload: dict[str, Any] = Body(...),
     ) -> dict[str, object]:
         try:

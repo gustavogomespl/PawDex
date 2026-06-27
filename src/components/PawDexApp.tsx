@@ -15,7 +15,9 @@ export function PawDexApp() {
   if (store.isLoadingInitialState) {
     return (
       <main className="app-shell">
-        <p>Carregando PawDex...</p>
+        <p role="status" aria-live="polite">
+          Carregando PawDex...
+        </p>
       </main>
     );
   }
@@ -40,9 +42,15 @@ export function PawDexApp() {
       />
 
       {store.warning ? (
-        <p className="notice notice--warning">{store.warning}</p>
+        <p className="notice notice--warning" role="alert">
+          {store.warning}
+        </p>
       ) : null}
-      {store.notice ? <p className="notice">{store.notice}</p> : null}
+      {store.notice ? (
+        <p className="notice" role="status" aria-live="polite">
+          {store.notice}
+        </p>
+      ) : null}
 
       {isComposing ? (
         <SightingComposer

@@ -75,6 +75,7 @@ class AnalyzeSightingService:
             place_id=place_id,
             species=detection.species,
             embedding=embedding.vector,
+            model_version=embedding.model_version,
             limit=3,
         )
         analysis_id = self.repository.create_pending_analysis(

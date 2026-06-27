@@ -1,5 +1,11 @@
 import { Camera, ImageUp, Plus, X } from "lucide-react";
-import { type CSSProperties, type ChangeEvent, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type ChangeEvent,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import type { PetDetection } from "@/domain/detection/types";
 import { analyzePetSighting } from "@/domain/matching/client";
 import type {
@@ -24,11 +30,14 @@ type NewAnimalPayload = {
 
 type SightingComposerProps = {
   placeId: string;
-  onAddToExisting: (payload: ExistingSightingPayload) => void;
-  onCreateNew: (payload: NewAnimalPayload) => void;
+  onAddToExisting: (payload: ExistingSightingPayload) => void | Promise<void>;
+  onCreateNew: (payload: NewAnimalPayload) => void | Promise<void>;
   onCancel: () => void;
   onWarning: (message: string) => void;
 };
+
+const MAX_CAPTURE_DIMENSION = 1280;
+const CAPTURE_QUALITY = 0.8;
 
 export function SightingComposer({
   placeId,
@@ -38,9 +47,13 @@ export function SightingComposer({
   onWarning,
 }: SightingComposerProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const isMountedRef = useRef(true);
+  const submittingRef = useRef(false);
   const analysisRequestIdRef = useRef(0);
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [imageSize, setImageSize] = useState<{
     width: number;
     height: number;
@@ -57,6 +70,16 @@ export function SightingComposer({
   const [newName, setNewName] = useState("");
   const [species, setSpecies] = useState<Species>("cat");
 
+  useEffect(() => {
+    isMountedRef.current = true;
+
+    return () => {
+      isMountedRef.current = false;
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    };
+  }, []);
+
   async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
 
@@ -65,6 +88,7 @@ export function SightingComposer({
       return;
     }
 
+    stopCamera();
     const requestId = startNewImageRequest();
     resetImageAnalysis();
     const dataUrl = await readFileAsDataUrl(file);
@@ -86,6 +110,7 @@ export function SightingComposer({
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      streamRef.current = stream;
       setCameraStream(stream);
 
       if (videoRef.current) {
@@ -105,25 +130,37 @@ export function SightingComposer({
     }
 
     const requestId = startNewImageRequest();
+    const { width, height } = computeCaptureSize(
+      video.videoWidth || 640,
+      video.videoHeight || 480,
+      MAX_CAPTURE_DIMENSION,
+    );
     const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth || 640;
-    canvas.height = video.videoHeight || 480;
+    canvas.width = width;
+    canvas.height = height;
     const context = canvas.getContext("2d");
-    context?.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const dataUrl = canvas.toDataURL("image/png");
+    context?.drawImage(video, 0, 0, width, height);
+    const dataUrl = canvas.toDataURL("image/jpeg", CAPTURE_QUALITY);
     resetImageAnalysis();
     setPhotoUrl(dataUrl);
     setImageSize(null);
     stopCamera();
-    await runDetection(dataUrlToFile(dataUrl, "camera-sighting.png"), requestId);
+    await runDetection(dataUrlToFile(dataUrl, "camera-sighting.jpg"), requestId);
   }
 
   function stopCamera() {
+    streamRef.current?.getTracks().forEach((track) => track.stop());
     cameraStream?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+
     setCameraStream(null);
   }
 
-  function handleCreateNew() {
+  async function handleCreateNew() {
     const name = newName.trim();
 
     if (!photoUrl || !name) {
@@ -136,21 +173,50 @@ export function SightingComposer({
       return;
     }
 
-    onCreateNew({ analysisId, displayName: name, species, photoUrl });
+    if (submittingRef.current) {
+      return;
+    }
+
+    submittingRef.current = true;
+    setIsSubmitting(true);
+
+    try {
+      await onCreateNew({ analysisId, displayName: name, species, photoUrl });
+    } finally {
+      finishSubmitting();
+    }
   }
 
-  function handleConfirmMatch(match: MatchCandidate) {
+  async function handleConfirmMatch(match: MatchCandidate) {
     if (!analysisId || !photoUrl) {
       onWarning("Analise a foto antes de confirmar o avistamento.");
       return;
     }
 
-    onAddToExisting({
-      analysisId,
-      animalId: match.animalId,
-      photoUrl,
-      matchConfidence: match.score,
-    });
+    if (submittingRef.current) {
+      return;
+    }
+
+    submittingRef.current = true;
+    setIsSubmitting(true);
+
+    try {
+      await onAddToExisting({
+        analysisId,
+        animalId: match.animalId,
+        photoUrl,
+        matchConfidence: match.score,
+      });
+    } finally {
+      finishSubmitting();
+    }
+  }
+
+  function finishSubmitting() {
+    if (isMountedRef.current) {
+      submittingRef.current = false;
+      setIsSubmitting(false);
+    }
   }
 
   function startNewImageRequest() {
@@ -302,6 +368,7 @@ export function SightingComposer({
               <button
                 key={animal.animalId}
                 type="button"
+                disabled={isSubmitting}
                 onClick={() => handleConfirmMatch(animal)}
               >
                 <img src={animal.primaryPhotoUrl} alt="" />
@@ -327,7 +394,12 @@ export function SightingComposer({
                 <option value="dog">Cachorro</option>
               </select>
             </label>
-            <button className="primary-action" type="button" onClick={handleCreateNew}>
+            <button
+              className="primary-action"
+              type="button"
+              disabled={isSubmitting}
+              onClick={handleCreateNew}
+            >
               <Plus aria-hidden="true" size={18} />
               Cadastrar novo
             </button>
@@ -336,6 +408,26 @@ export function SightingComposer({
       ) : null}
     </section>
   );
+}
+
+export function computeCaptureSize(
+  width: number,
+  height: number,
+  maxDimension: number,
+): { width: number; height: number } {
+  const safeWidth = Math.max(1, Math.floor(width) || 0);
+  const safeHeight = Math.max(1, Math.floor(height) || 0);
+  const longestSide = Math.max(safeWidth, safeHeight);
+
+  if (longestSide <= maxDimension) {
+    return { width: safeWidth, height: safeHeight };
+  }
+
+  const scale = maxDimension / longestSide;
+  return {
+    width: Math.max(1, Math.round(safeWidth * scale)),
+    height: Math.max(1, Math.round(safeHeight * scale)),
+  };
 }
 
 function readFileAsDataUrl(file: File): Promise<string> {

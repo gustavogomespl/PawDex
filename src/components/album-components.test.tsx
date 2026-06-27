@@ -51,7 +51,7 @@ describe("album presentation components", () => {
     );
 
     expect(screen.getByRole("heading", { name: "Mingau" })).toBeInTheDocument();
-    expect(screen.getByText("community")).toBeInTheDocument();
+    expect(screen.getByText("Comunitario")).toBeInTheDocument();
   });
 
   it("renders local stats and latest sightings", () => {

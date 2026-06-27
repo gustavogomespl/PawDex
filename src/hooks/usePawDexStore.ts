@@ -30,6 +30,7 @@ export type NewAnimalInput = {
 
 export function usePawDexStore() {
   const [state, setState] = useState<PawDexState | null>(null);
+  const [stateSource, setStateSource] = useState<"remote" | "local">("remote");
   const [hasLoadedInitialState, setHasLoadedInitialState] = useState(false);
   const [warning, setWarning] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -57,6 +58,7 @@ export function usePawDexStore() {
         }
 
         setState(remoteState);
+        setStateSource("remote");
         setSelectedAnimalId((currentAnimalId) =>
           getSelectedAnimalId(remoteState, currentAnimalId),
         );
@@ -69,6 +71,7 @@ export function usePawDexStore() {
         }
 
         setState(result.state);
+        setStateSource("local");
         setSelectedAnimalId((currentAnimalId) =>
           getSelectedAnimalId(result.state, currentAnimalId),
         );
@@ -92,12 +95,19 @@ export function usePawDexStore() {
       return;
     }
 
+    // Postgres is authoritative. Only persist to localStorage when we are running
+    // on the offline fallback, so remote state (including photo data URLs) never
+    // gets mirrored into the size-limited localStorage cache.
+    if (stateSource !== "local") {
+      return;
+    }
+
     const saveWarning = savePawDexState(state);
 
     if (saveWarning) {
       setWarning(saveWarning);
     }
-  }, [hasLoadedInitialState, state]);
+  }, [hasLoadedInitialState, state, stateSource]);
 
   const place = state?.places.find((candidate) => candidate.id === ACTIVE_PLACE_ID);
   const progress = state

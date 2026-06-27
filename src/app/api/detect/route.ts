@@ -8,7 +8,15 @@ function emptyResponse(error: string): DetectionResponse {
 }
 
 export async function POST(request: Request) {
-  const incomingForm = await request.formData();
+  let incomingForm: FormData;
+  try {
+    incomingForm = await request.formData();
+  } catch {
+    return NextResponse.json(emptyResponse("Requisicao invalida."), {
+      status: 400,
+    });
+  }
+
   const file = incomingForm.get("file");
 
   if (!(file instanceof File)) {

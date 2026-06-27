@@ -218,6 +218,7 @@ def test_find_matches_restricts_vector_search_to_place_and_species():
         place_id="place-office",
         species="cat",
         embedding=embedding,
+        model_version="mobilenet-v3",
         limit=2,
     )
 
@@ -225,7 +226,8 @@ def test_find_matches_restricts_vector_search_to_place_and_species():
     assert "ae.embedding <=> %s" in query.sql
     assert "ae.place_id = %s" in query.sql
     assert "a.species = %s" in query.sql
-    assert query.params == (embedding, "place-office", "cat", 2)
+    assert "ae.model_version = %s" in query.sql
+    assert query.params == (embedding, "place-office", "cat", "mobilenet-v3", 2)
     assert matches[0].animal_id == "animal-mingau"
     assert matches[0].score == 0.8
 

@@ -25,6 +25,7 @@ class PawDexRepository(Protocol):
         place_id: str,
         species: str,
         embedding: Any,
+        model_version: str,
         limit: int = 3,
     ) -> list[MatchCandidate]: ...
 
@@ -162,6 +163,7 @@ class PostgresPawDexRepository:
         place_id: str,
         species: str,
         embedding: Any,
+        model_version: str,
         limit: int = 3,
     ) -> list[MatchCandidate]:
         sql = """
@@ -177,6 +179,7 @@ class PostgresPawDexRepository:
              AND a.place_id = ae.place_id
             WHERE ae.place_id = %s
               AND a.species = %s
+              AND ae.model_version = %s
             GROUP BY ae.animal_id, a.display_name, a.species, a.primary_photo_url
             ORDER BY distance ASC
             LIMIT %s
@@ -184,7 +187,7 @@ class PostgresPawDexRepository:
         with self.pool.connection() as connection:
             rows = connection.execute(
                 sql,
-                (embedding, place_id, species, limit),
+                (embedding, place_id, species, model_version, limit),
             ).fetchall()
 
         return [

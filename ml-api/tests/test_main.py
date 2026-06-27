@@ -1,3 +1,4 @@
+import inspect
 from io import BytesIO
 from typing import Optional
 
@@ -428,3 +429,62 @@ def test_detect_does_not_construct_matching_dependencies():
 
     assert response.status_code == 200
     assert counters == {"repository": 0, "embedder": 0, "analyze_service": 0}
+
+
+def test_blocking_endpoints_run_in_threadpool_not_event_loop():
+    app = create_app(
+        detector_factory=lambda: FakeDetector(DetectionResponse([], None)),
+        repository_factory=lambda: FakeRepository(),
+        analyze_service_factory=lambda _app: FakeAnalyzeService(),
+    )
+    endpoints = {
+        route.path: route.endpoint
+        for route in app.routes
+        if hasattr(route, "endpoint")
+    }
+
+    for path in (
+        "/health",
+        "/detect",
+        "/places/{place_id}/state",
+        "/analyze-sighting",
+        "/confirm-sighting",
+    ):
+        assert not inspect.iscoroutinefunction(endpoints[path]), (
+            f"{path} must be a sync handler so Starlette offloads it to the "
+            "threadpool instead of blocking the event loop"
+        )
+
+
+def test_detect_rejects_oversized_upload(monkeypatch):
+    monkeypatch.setattr("app.main.MAX_UPLOAD_BYTES", 4)
+    detector = FakeDetector(DetectionResponse([], None))
+    app = create_app(lambda: detector)
+    client = TestClient(app)
+
+    response = client.post(
+        "/detect",
+        files={"file": ("pet.png", make_png_bytes(), "image/png")},
+    )
+
+    assert response.status_code == 413
+    assert detector.calls == 0
+
+
+def test_analyze_sighting_rejects_oversized_upload(monkeypatch):
+    monkeypatch.setattr("app.main.MAX_UPLOAD_BYTES", 4)
+    service = FakeAnalyzeService()
+    app = create_app(
+        detector_factory=lambda: FakeDetector(DetectionResponse([], None)),
+        analyze_service_factory=lambda _app: service,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/analyze-sighting",
+        data={"place_id": "place-1"},
+        files={"file": ("pet.png", make_png_bytes(), "image/png")},
+    )
+
+    assert response.status_code == 413
+    assert service.calls == []
