@@ -47,6 +47,12 @@ def crop_to_box(image: Image.Image, box: BoundingBox) -> Image.Image:
     if width < 1 or height < 1:
         raise ValueError("Cannot crop an empty image.")
 
+    if not all(
+        math.isfinite(coordinate)
+        for coordinate in (box.x1, box.y1, box.x2, box.y2)
+    ):
+        raise ValueError("Bounding box coordinates must be finite.")
+
     left = _clamp(math.floor(box.x1), 0, width - 1)
     upper = _clamp(math.floor(box.y1), 0, height - 1)
     right = _clamp(math.ceil(box.x2), 1, width)
@@ -80,8 +86,8 @@ def normalize_vector(vector: np.ndarray) -> np.ndarray:
         raise ValueError("Embedding vector contains non-finite values.")
 
     norm = float(np.linalg.norm(normalized))
-    if norm == 0.0:
-        return normalized.copy()
+    if not math.isfinite(norm) or norm <= 0:
+        raise ValueError("Embedding vector norm must be positive and finite.")
 
     return (normalized / norm).astype(np.float32)
 
@@ -100,11 +106,12 @@ class TorchvisionMobileNetEmbedder:
             tensor = transforms(rgb_image).unsqueeze(0)
             output = model(tensor)
 
-        vector = output.detach().cpu().numpy().reshape(-1).astype(np.float32)
-        if vector.shape != (EMBEDDING_DIMENSION,):
+        raw_vector = output.detach().cpu().numpy().astype(np.float32)
+        if raw_vector.shape != (1, EMBEDDING_DIMENSION):
             raise ValueError(
-                f"Expected embedding shape ({EMBEDDING_DIMENSION},), got {vector.shape}."
+                f"Expected embedding shape (1, {EMBEDDING_DIMENSION}), got {raw_vector.shape}."
             )
+        vector = raw_vector.reshape(EMBEDDING_DIMENSION)
 
         return EmbeddingResult(
             vector=normalize_vector(vector),

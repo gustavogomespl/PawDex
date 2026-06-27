@@ -39,6 +39,13 @@ def test_crop_to_box_returns_one_pixel_for_box_outside_image_bounds():
     assert crop.size == (1, 1)
 
 
+def test_crop_to_box_rejects_non_finite_coordinates():
+    image = Image.new("RGB", (100, 80), "white")
+
+    with pytest.raises(ValueError, match="coordinates must be finite"):
+        crop_to_box(image, BoundingBox(0, 0, np.nan, 20))
+
+
 def test_quality_score_penalizes_tiny_crops():
     small = Image.new("RGB", (40, 40), "white")
     large = Image.new("RGB", (300, 240), "white")
@@ -54,11 +61,9 @@ def test_normalize_vector_returns_unit_vector():
     assert math.isclose(float(np.linalg.norm(vector)), 1.0)
 
 
-def test_normalize_vector_preserves_zero_vector_as_float32():
-    vector = normalize_vector(np.zeros(EMBEDDING_DIMENSION, dtype=np.float64))
-
-    assert vector.dtype == np.float32
-    assert np.array_equal(vector, np.zeros(EMBEDDING_DIMENSION, dtype=np.float32))
+def test_normalize_vector_rejects_zero_vector():
+    with pytest.raises(ValueError, match="norm must be positive and finite"):
+        normalize_vector(np.zeros(EMBEDDING_DIMENSION, dtype=np.float64))
 
 
 @pytest.mark.parametrize(
@@ -167,6 +172,18 @@ def test_torchvision_embedder_rejects_wrong_model_output_dimension():
     embedder._ensure_model = lambda: (
         FakeTorch(),
         FakeModel(np.ones((1, EMBEDDING_DIMENSION - 1), dtype=np.float32)),
+        FakeTransforms(),
+    )
+
+    with pytest.raises(ValueError, match="Expected embedding shape"):
+        embedder.embed(Image.new("RGB", (224, 224), "white"))
+
+
+def test_torchvision_embedder_rejects_wrong_raw_model_output_shape():
+    embedder = TorchvisionMobileNetEmbedder()
+    embedder._ensure_model = lambda: (
+        FakeTorch(),
+        FakeModel(np.ones((2, 288), dtype=np.float32)),
         FakeTransforms(),
     )
 
