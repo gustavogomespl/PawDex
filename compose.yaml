@@ -5,6 +5,7 @@ services:
       POSTGRES_USER: pawdex
       POSTGRES_PASSWORD: pawdex
       POSTGRES_DB: pawdex
+      PGDATA: /var/lib/postgresql/data
     volumes:
       - pawdex-db-data:/var/lib/postgresql/data
       - ./db/init:/docker-entrypoint-initdb.d:ro
