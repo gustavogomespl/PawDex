@@ -35,6 +35,13 @@ def test_crop_to_box_returns_one_pixel_for_degenerate_box():
     assert crop.size == (1, 1)
 
 
+def test_crop_to_box_returns_one_pixel_for_inverted_box():
+    image = Image.new("RGB", (100, 80), "white")
+    crop = crop_to_box(image, BoundingBox(40, 50, 20, 30))
+
+    assert crop.size == (1, 1)
+
+
 def test_crop_to_box_returns_one_pixel_for_box_outside_image_bounds():
     image = Image.new("RGB", (100, 80), "white")
     crop = crop_to_box(image, BoundingBox(110, 90, 120, 100))
@@ -95,6 +102,19 @@ def test_embedding_result_keeps_fixed_contract():
     assert math.isclose(float(np.linalg.norm(result.vector)), 1.0, rel_tol=1e-6)
     assert result.model_version == MODEL_VERSION
     assert result.vector[0] != 0
+
+
+def test_embedding_result_vector_is_read_only_after_validation():
+    result = EmbeddingResult(
+        vector=np.ones(EMBEDDING_DIMENSION, dtype=np.float32),
+        model_version=MODEL_VERSION,
+        quality_score=0.8,
+    )
+
+    with pytest.raises(ValueError, match="read-only"):
+        result.vector[0] = 2.0
+
+    assert math.isclose(float(np.linalg.norm(result.vector)), 1.0, rel_tol=1e-6)
 
 
 def test_embedding_result_rejects_invalid_shape():

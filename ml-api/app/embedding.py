@@ -32,7 +32,10 @@ class EmbeddingResult:
         if not 0 <= self.quality_score <= 1:
             raise ValueError("Embedding quality score must be between 0 and 1.")
 
-        object.__setattr__(self, "vector", normalize_vector(vector))
+        normalized_vector = normalize_vector(vector).copy()
+        normalized_vector.setflags(write=False)
+
+        object.__setattr__(self, "vector", normalized_vector)
         object.__setattr__(self, "quality_score", float(self.quality_score))
 
 
