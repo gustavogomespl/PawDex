@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { analyzePetSighting } from "@/domain/matching/client";
 import type { AnalyzeSightingResponse } from "@/domain/matching/types";
 import { SightingComposer } from "./SightingComposer";
@@ -11,6 +11,7 @@ vi.mock("@/domain/matching/client", () => ({
 
 const analyzePetSightingMock = vi.mocked(analyzePetSighting);
 const placeId = "place-office-centro";
+const nativeFileReader = globalThis.FileReader;
 const defaultAnalyzeResponse = {
   analysisId: "analysis-1",
   detection: null,
@@ -37,7 +38,12 @@ function renderComposer(overrides = {}) {
 describe("SightingComposer", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    globalThis.FileReader = nativeFileReader;
     analyzePetSightingMock.mockResolvedValue(defaultAnalyzeResponse);
+  });
+
+  afterEach(() => {
+    globalThis.FileReader = nativeFileReader;
   });
 
   it("uploads an image, shows a vector match, and confirms an existing animal match", async () => {
@@ -381,7 +387,118 @@ describe("SightingComposer", () => {
     expect(onAddToExisting).toHaveBeenCalledWith({
       analysisId: "analysis-second",
       animalId: "animal-second",
-      photoUrl: expect.stringContaining("data:image/png"),
+      photoUrl: expect.stringContaining("data:image/png;base64,c2Vjb25k"),
+      matchConfidence: 0.92,
+    });
+  });
+
+  it("ignores stale upload reads that finish after a newer image", async () => {
+    const user = userEvent.setup();
+    const onAddToExisting = vi.fn();
+    const readers = new Map<
+      string,
+      { reader: FileReader; result: string; finish: () => void }
+    >();
+
+    class ControlledFileReader {
+      result: string | ArrayBuffer | null = null;
+      error: DOMException | null = null;
+      onload: ((event: ProgressEvent<FileReader>) => void) | null = null;
+      onerror: ((event: ProgressEvent<FileReader>) => void) | null = null;
+
+      readAsDataURL(file: File) {
+        const result = `data:${file.type};base64,${btoa(file.name)}`;
+        readers.set(file.name, {
+          reader: this as unknown as FileReader,
+          result,
+          finish: () => {
+            this.result = result;
+            this.onload?.(new ProgressEvent("load"));
+          },
+        });
+      }
+    }
+
+    globalThis.FileReader =
+      ControlledFileReader as unknown as typeof FileReader;
+    analyzePetSightingMock
+      .mockResolvedValueOnce({
+        analysisId: "analysis-second-read",
+        detection: {
+          species: "cat",
+          label: "cat",
+          confidence: 0.93,
+          box: { x1: 1, y1: 2, x2: 40, y2: 50 },
+        },
+        embedding: { modelVersion: "clip-test", qualityScore: 0.9 },
+        matches: [
+          {
+            animalId: "animal-second-read",
+            displayName: "Second Read",
+            species: "cat",
+            primaryPhotoUrl: "/second.png",
+            score: 0.92,
+          },
+        ],
+        recommendation: "possible_existing",
+      })
+      .mockResolvedValueOnce({
+        analysisId: "analysis-first-read",
+        detection: {
+          species: "dog",
+          label: "dog",
+          confidence: 0.88,
+          box: { x1: 5, y1: 6, x2: 70, y2: 80 },
+        },
+        embedding: { modelVersion: "clip-test", qualityScore: 0.7 },
+        matches: [
+          {
+            animalId: "animal-first-read",
+            displayName: "First Read",
+            species: "dog",
+            primaryPhotoUrl: "/first.png",
+            score: 0.81,
+          },
+        ],
+        recommendation: "possible_existing",
+      });
+    renderComposer({ onAddToExisting });
+
+    const input = screen.getByLabelText(/enviar imagem/i);
+    fireEvent.change(input, {
+      target: {
+        files: [new File(["first"], "first.png", { type: "image/png" })],
+      },
+    });
+    fireEvent.change(input, {
+      target: {
+        files: [new File(["second"], "second.png", { type: "image/png" })],
+      },
+    });
+
+    readers.get("second.png")?.finish();
+    expect(
+      await screen.findByText("Parece ser Second Read, 92% de similaridade."),
+    ).toBeInTheDocument();
+
+    readers.get("first.png")?.finish();
+
+    await waitFor(() =>
+      expect(screen.queryByText(/Parece ser First Read/)).not.toBeInTheDocument(),
+    );
+    await user.click(
+      screen.getByRole("button", { name: /confirmar como second read/i }),
+    );
+
+    expect(analyzePetSightingMock).toHaveBeenCalledTimes(1);
+    expect(analyzePetSightingMock).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "second.png" }),
+      placeId,
+    );
+    expect(onAddToExisting).toHaveBeenCalledWith({
+      analysisId: "analysis-second-read",
+      animalId: "animal-second-read",
+      photoUrl: "data:image/png;base64,c2Vjb25kLnBuZw==",
       matchConfidence: 0.92,
     });
   });

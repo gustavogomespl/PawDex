@@ -65,9 +65,17 @@ export function SightingComposer({
       return;
     }
 
-    setPhotoUrl(await readFileAsDataUrl(file));
+    const requestId = startNewImageRequest();
+    resetImageAnalysis();
+    const dataUrl = await readFileAsDataUrl(file);
+
+    if (!isCurrentImageRequest(requestId)) {
+      return;
+    }
+
+    setPhotoUrl(dataUrl);
     setImageSize(null);
-    await runDetection(file);
+    await runDetection(file, requestId);
   }
 
   async function openCamera() {
@@ -96,16 +104,18 @@ export function SightingComposer({
       return;
     }
 
+    const requestId = startNewImageRequest();
     const canvas = document.createElement("canvas");
     canvas.width = video.videoWidth || 640;
     canvas.height = video.videoHeight || 480;
     const context = canvas.getContext("2d");
     context?.drawImage(video, 0, 0, canvas.width, canvas.height);
     const dataUrl = canvas.toDataURL("image/png");
+    resetImageAnalysis();
     setPhotoUrl(dataUrl);
     setImageSize(null);
     stopCamera();
-    await runDetection(dataUrlToFile(dataUrl, "camera-sighting.png"));
+    await runDetection(dataUrlToFile(dataUrl, "camera-sighting.png"), requestId);
   }
 
   function stopCamera() {
@@ -143,9 +153,32 @@ export function SightingComposer({
     });
   }
 
-  async function runDetection(file: File) {
+  function startNewImageRequest() {
     const requestId = analysisRequestIdRef.current + 1;
     analysisRequestIdRef.current = requestId;
+    return requestId;
+  }
+
+  function isCurrentImageRequest(requestId: number) {
+    return requestId === analysisRequestIdRef.current;
+  }
+
+  function resetImageAnalysis() {
+    setPhotoUrl(null);
+    setImageSize(null);
+    setDetectionStatus("idle");
+    setDetectionMessage(null);
+    setBestDetection(null);
+    setAnalysisId(null);
+    setMatches([]);
+    setRecommendation(null);
+  }
+
+  async function runDetection(file: File, requestId: number) {
+    if (!isCurrentImageRequest(requestId)) {
+      return;
+    }
+
     setDetectionStatus("loading");
     setDetectionMessage("Analisando imagem...");
     setBestDetection(null);
@@ -156,7 +189,7 @@ export function SightingComposer({
     try {
       const response = await analyzePetSighting(file, placeId);
 
-      if (requestId !== analysisRequestIdRef.current) {
+      if (!isCurrentImageRequest(requestId)) {
         return;
       }
 
@@ -179,7 +212,7 @@ export function SightingComposer({
         )}`,
       );
     } catch {
-      if (requestId !== analysisRequestIdRef.current) {
+      if (!isCurrentImageRequest(requestId)) {
         return;
       }
 
