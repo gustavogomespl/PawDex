@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import os
 import re
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
+
+import pytest
 
 from app.repository import (
     PostgresPawDexRepository,
@@ -281,25 +285,143 @@ def test_confirm_new_animal_creates_animal_and_embedding_for_same_animal():
     assert result["selectedAnimalId"] == animal["id"]
 
 
-def test_confirmation_match_suggestion_inserts_include_species_if_present():
+def test_confirm_new_animal_rejects_species_mismatch_with_pending_analysis():
     connection = RecordingConnection(
         pending_analysis=pending_analysis_row(species="cat"),
         place=place_row(),
-        animals=[animal_row(id="animal-mingau")],
-        sightings=[sighting_row(animal_id="animal-mingau")],
     )
     repository = PostgresPawDexRepository(RecordingPool(connection))
 
-    repository.confirm_existing_animal(
+    with pytest.raises(
+        ValueError,
+        match="New animal species must match pending analysis species.",
+    ):
+        repository.confirm_new_animal(
+            analysis_id="analysis-1",
+            place_id="place-office",
+            display_name="Rex",
+            species="dog",
+            photo_url="https://example.com/rex.jpg",
+            zone_label="Jardim",
+        )
+
+    assert queries_containing(connection, "insert into animals") == []
+    assert queries_containing(connection, "insert into sightings") == []
+    assert queries_containing(connection, "insert into animal_embeddings") == []
+
+
+def test_confirm_existing_animal_raises_when_pending_analysis_is_missing():
+    connection = RecordingConnection(pending_analysis=None)
+    repository = PostgresPawDexRepository(RecordingPool(connection))
+
+    with pytest.raises(ValueError, match="Pending sighting analysis not found."):
+        repository.confirm_existing_animal(
+            analysis_id="missing-analysis",
+            place_id="place-office",
+            animal_id="animal-mingau",
+            photo_url="https://example.com/new-sighting.jpg",
+            zone_label="Recepcao",
+        )
+
+    assert queries_containing(connection, "insert into sightings") == []
+    assert queries_containing(connection, "insert into animal_embeddings") == []
+
+
+def test_postgres_repository_smoke_creates_pending_and_confirms_new_animal():
+    numpy = pytest.importorskip("numpy", reason="Postgres smoke requires numpy.")
+    psycopg = pytest.importorskip("psycopg", reason="Postgres smoke requires psycopg.")
+    psycopg_pool = pytest.importorskip(
+        "psycopg_pool",
+        reason="Postgres smoke requires psycopg_pool.",
+    )
+    pytest.importorskip("pgvector", reason="Postgres smoke requires pgvector.")
+
+    from app.database import create_pool
+
+    database_url = os.getenv(
+        "DATABASE_URL",
+        "postgresql://pawdex:pawdex@127.0.0.1:5432/pawdex",
+    )
+    pool = None
+    try:
+        pool = create_pool(database_url)
+        repository = PostgresPawDexRepository(pool)
+        repository.healthcheck()
+    except (psycopg.OperationalError, psycopg_pool.PoolTimeout) as exc:
+        if pool is not None:
+            pool.close()
+        pytest.skip(f"Postgres smoke unavailable: {exc}")
+
+    analysis_id: str | None = None
+    selected_animal_id: str | None = None
+    place_id = "place-office-centro"
+    display_name = f"Smoke {uuid.uuid4().hex[:8]}"
+    photo_url = f"https://example.com/{uuid.uuid4().hex}.jpg"
+
+    try:
+        analysis_id = repository.create_pending_analysis(
+            place_id=place_id,
+            species="cat",
+            detector_confidence=0.91,
+            detection_box={"x1": 1, "y1": 2, "x2": 10, "y2": 12},
+            model_version="repository-smoke",
+            embedding=numpy.zeros(576, dtype=numpy.float32),
+            quality_score=0.82,
+        )
+        result = repository.confirm_new_animal(
+            analysis_id=analysis_id,
+            place_id=place_id,
+            display_name=display_name,
+            species="cat",
+            photo_url=photo_url,
+            zone_label="Smoke test",
+        )
+
+        selected_animal_id = result["selectedAnimalId"]
+        selected = next(
+            animal
+            for animal in result["state"]["animals"]
+            if animal["id"] == selected_animal_id
+        )
+        assert selected_animal_id.startswith("animal-")
+        assert selected["displayName"] == display_name
+        assert selected["species"] == "cat"
+        assert selected["primaryPhotoUrl"] == photo_url
+    finally:
+        with pool.connection() as connection:
+            if selected_animal_id is not None:
+                connection.execute(
+                    "DELETE FROM animals WHERE id = %s AND place_id = %s",
+                    (selected_animal_id, place_id),
+                )
+            if analysis_id is not None:
+                connection.execute(
+                    "DELETE FROM pending_sighting_analyses "
+                    "WHERE id = %s AND place_id = %s",
+                    (analysis_id, place_id),
+                )
+        pool.close()
+
+
+def test_confirm_new_animal_allows_species_matching_pending_analysis():
+    connection = RecordingConnection(
+        pending_analysis=pending_analysis_row(species="cat"),
+        place=place_row(),
+        animals=[animal_row(id="animal-created", display_name="Nina")],
+        sightings=[sighting_row(animal_id="animal-created")],
+    )
+    repository = PostgresPawDexRepository(RecordingPool(connection))
+
+    result = repository.confirm_new_animal(
         analysis_id="analysis-1",
         place_id="place-office",
-        animal_id="animal-mingau",
-        photo_url="https://example.com/new-sighting.jpg",
-        zone_label="Recepcao",
+        display_name="Nina",
+        species="cat",
+        photo_url="https://example.com/nina.jpg",
+        zone_label="Jardim",
     )
 
-    for insert in queries_containing(connection, "insert into match_suggestions"):
-        assert "species" in insert_columns(insert)
+    assert result["selectedAnimalId"].startswith("animal-")
 
 
 def only_query_containing(

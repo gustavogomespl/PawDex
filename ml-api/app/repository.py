@@ -293,6 +293,9 @@ class PostgresPawDexRepository:
     ) -> dict[str, Any]:
         with self.pool.connection() as connection:
             pending = self._fetch_pending_analysis(connection, analysis_id, place_id)
+            if species != pending["species"]:
+                raise ValueError("New animal species must match pending analysis species.")
+
             now = datetime.now(timezone.utc)
             animal_id = _new_id("animal")
             sighting_id = _new_id("sighting")

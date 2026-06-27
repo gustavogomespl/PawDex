@@ -15,11 +15,12 @@ def configure_connection(connection: Connection[Any]) -> None:
 
 
 def create_pool(database_url: str) -> ConnectionPool:
+    """Create an open connection pool ready for request-time repository use."""
     return ConnectionPool(
         database_url,
         min_size=1,
         max_size=5,
-        open=False,
+        open=True,
         kwargs={"row_factory": dict_row},
         configure=configure_connection,
     )
