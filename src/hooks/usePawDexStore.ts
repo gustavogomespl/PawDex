@@ -1,12 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import {
-  addSightingToAnimal,
-  createAnimalFromSighting,
-  createLocalId,
-  suggestMatchesForPlace,
-} from "@/domain/pawdex/actions";
+import { useEffect, useState } from "react";
+import { confirmPetSighting } from "@/domain/matching/client";
 import {
   getAlbumSlots,
   getAnimalsForPlace,
@@ -14,26 +9,28 @@ import {
   getPlaceProgress,
   getSightingsForAnimal,
 } from "@/domain/pawdex/album";
-import { demoState } from "@/domain/pawdex/seed";
 import { loadPawDexState, savePawDexState } from "@/domain/pawdex/storage";
 import type { PawDexState, Species } from "@/domain/pawdex/types";
 
 const ACTIVE_PLACE_ID = "place-office-centro";
 
 export type ExistingSightingInput = {
+  analysisId: string;
   animalId: string;
   photoUrl: string;
+  matchConfidence: number;
 };
 
 export type NewAnimalInput = {
+  analysisId: string;
   displayName: string;
   species: Species;
   photoUrl: string;
 };
 
 export function usePawDexStore() {
-  const [state, setState] = useState<PawDexState>(demoState);
-  const [hasLoadedStoredState, setHasLoadedStoredState] = useState(false);
+  const [state, setState] = useState<PawDexState | null>(null);
+  const [hasLoadedInitialState, setHasLoadedInitialState] = useState(false);
   const [warning, setWarning] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [selectedAnimalId, setSelectedAnimalId] = useState<string | null>(
@@ -41,14 +38,57 @@ export function usePawDexStore() {
   );
 
   useEffect(() => {
-    const result = loadPawDexState();
-    setState(result.state);
-    setWarning(result.warning);
-    setHasLoadedStoredState(true);
+    let isMounted = true;
+
+    async function loadInitialState() {
+      try {
+        const response = await fetch(
+          `/api/pawdex/state?placeId=${ACTIVE_PLACE_ID}`,
+        );
+
+        if (!response.ok) {
+          throw new Error("Remote PawDex state failed.");
+        }
+
+        const remoteState = (await response.json()) as PawDexState;
+
+        if (!isMounted) {
+          return;
+        }
+
+        setState(remoteState);
+        setSelectedAnimalId((currentAnimalId) =>
+          getSelectedAnimalId(remoteState, currentAnimalId),
+        );
+        setWarning(null);
+      } catch {
+        const result = loadPawDexState();
+
+        if (!isMounted) {
+          return;
+        }
+
+        setState(result.state);
+        setSelectedAnimalId((currentAnimalId) =>
+          getSelectedAnimalId(result.state, currentAnimalId),
+        );
+        setWarning(formatRemoteLoadWarning(result.warning));
+      } finally {
+        if (isMounted) {
+          setHasLoadedInitialState(true);
+        }
+      }
+    }
+
+    void loadInitialState();
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   useEffect(() => {
-    if (!hasLoadedStoredState) {
+    if (!hasLoadedInitialState || !state) {
       return;
     }
 
@@ -57,61 +97,69 @@ export function usePawDexStore() {
     if (saveWarning) {
       setWarning(saveWarning);
     }
-  }, [hasLoadedStoredState, state]);
+  }, [hasLoadedInitialState, state]);
 
-  const place = state.places.find((candidate) => candidate.id === ACTIVE_PLACE_ID);
-  const progress = getPlaceProgress(state, ACTIVE_PLACE_ID);
-  const albumSlots = getAlbumSlots(state, ACTIVE_PLACE_ID);
-  const animals = getAnimalsForPlace(state, ACTIVE_PLACE_ID);
-  const latestSightings = getLatestSightings(state, ACTIVE_PLACE_ID, 5);
+  const place = state?.places.find((candidate) => candidate.id === ACTIVE_PLACE_ID);
+  const progress = state
+    ? getPlaceProgress(state, ACTIVE_PLACE_ID)
+    : { discovered: 0, total: 0 };
+  const albumSlots = state ? getAlbumSlots(state, ACTIVE_PLACE_ID) : [];
+  const animals = state ? getAnimalsForPlace(state, ACTIVE_PLACE_ID) : [];
+  const latestSightings = state
+    ? getLatestSightings(state, ACTIVE_PLACE_ID, 5)
+    : [];
   const selectedAnimal =
     animals.find((animal) => animal.id === selectedAnimalId) ?? animals[0] ?? null;
-  const selectedAnimalSightings = selectedAnimal
+  const selectedAnimalSightings = state && selectedAnimal
     ? getSightingsForAnimal(state, selectedAnimal.id)
     : [];
-  const suggestions = useMemo(
-    () => suggestMatchesForPlace(state, ACTIVE_PLACE_ID, 3),
-    [state],
-  );
 
-  function addExistingSighting(input: ExistingSightingInput) {
-    const now = new Date().toISOString();
-    setState((current) =>
-      addSightingToAnimal(current, {
-        sightingId: createLocalId("sighting"),
+  async function addExistingSighting(input: ExistingSightingInput) {
+    try {
+      const response = await confirmPetSighting({
+        analysisId: input.analysisId,
         placeId: ACTIVE_PLACE_ID,
+        decision: "existing",
         animalId: input.animalId,
+        matchConfidence: input.matchConfidence,
         photoUrl: input.photoUrl,
         zoneLabel: "Area comum",
-        takenAt: now,
-        matchConfidence: 0.84,
-      }),
-    );
-    setSelectedAnimalId(input.animalId);
-    setNotice("Avistamento salvo na PawDex local.");
+      });
+
+      setState(response.state);
+      setSelectedAnimalId(response.selectedAnimalId);
+      setWarning(null);
+      setNotice("Avistamento salvo na PawDex.");
+    } catch (error) {
+      setWarning("Nao foi possivel salvar o avistamento agora.");
+      throw error;
+    }
   }
 
-  function createNewAnimal(input: NewAnimalInput) {
-    const animalId = createLocalId("animal");
-    const now = new Date().toISOString();
-
-    setState((current) =>
-      createAnimalFromSighting(current, {
-        animalId,
-        sightingId: createLocalId("sighting"),
+  async function createNewAnimal(input: NewAnimalInput) {
+    try {
+      const response = await confirmPetSighting({
+        analysisId: input.analysisId,
         placeId: ACTIVE_PLACE_ID,
+        decision: "new",
         displayName: input.displayName,
         species: input.species,
         photoUrl: input.photoUrl,
         zoneLabel: "Area comum",
-        takenAt: now,
-      }),
-    );
-    setSelectedAnimalId(animalId);
-    setNotice("Novo animal adicionado ao album.");
+      });
+
+      setState(response.state);
+      setSelectedAnimalId(response.selectedAnimalId);
+      setWarning(null);
+      setNotice("Novo animal adicionado ao album.");
+    } catch (error) {
+      setWarning("Nao foi possivel salvar o avistamento agora.");
+      throw error;
+    }
   }
 
   return {
+    isLoadingInitialState: !hasLoadedInitialState,
     place,
     progress,
     albumSlots,
@@ -119,7 +167,6 @@ export function usePawDexStore() {
     latestSightings,
     selectedAnimal,
     selectedAnimalSightings,
-    suggestions,
     warning,
     notice,
     setWarning,
@@ -128,4 +175,24 @@ export function usePawDexStore() {
     addExistingSighting,
     createNewAnimal,
   };
+}
+
+function getSelectedAnimalId(
+  state: PawDexState,
+  currentAnimalId: string | null,
+): string | null {
+  const animals = getAnimalsForPlace(state, ACTIVE_PLACE_ID);
+
+  if (currentAnimalId && animals.some((animal) => animal.id === currentAnimalId)) {
+    return currentAnimalId;
+  }
+
+  return animals[0]?.id ?? null;
+}
+
+function formatRemoteLoadWarning(localWarning: string | null): string {
+  const remoteWarning =
+    "Nao foi possivel carregar a PawDex remota. Usando dados locais.";
+
+  return localWarning ? `${remoteWarning} ${localWarning}` : remoteWarning;
 }

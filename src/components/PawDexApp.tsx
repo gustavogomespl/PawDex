@@ -12,6 +12,14 @@ export function PawDexApp() {
   const [isComposing, setIsComposing] = useState(false);
   const store = usePawDexStore();
 
+  if (store.isLoadingInitialState) {
+    return (
+      <main className="app-shell">
+        <p>Carregando PawDex...</p>
+      </main>
+    );
+  }
+
   if (!store.place) {
     return (
       <main className="app-shell">
@@ -38,16 +46,24 @@ export function PawDexApp() {
 
       {isComposing ? (
         <SightingComposer
-          suggestions={store.suggestions}
+          placeId={store.place.id}
           onWarning={store.setWarning}
           onCancel={() => setIsComposing(false)}
-          onAddToExisting={(payload) => {
-            store.addExistingSighting(payload);
-            setIsComposing(false);
+          onAddToExisting={async (payload) => {
+            try {
+              await store.addExistingSighting(payload);
+              setIsComposing(false);
+            } catch {
+              // The store owns the user-facing warning.
+            }
           }}
-          onCreateNew={(payload) => {
-            store.createNewAnimal(payload);
-            setIsComposing(false);
+          onCreateNew={async (payload) => {
+            try {
+              await store.createNewAnimal(payload);
+              setIsComposing(false);
+            } catch {
+              // The store owns the user-facing warning.
+            }
           }}
         />
       ) : null}

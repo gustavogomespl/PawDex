@@ -1,4 +1,5 @@
 import { Clock3, MapPin } from "lucide-react";
+import { formatSightingDateTime } from "@/domain/pawdex/date-format";
 import type { Animal, Sighting } from "@/domain/pawdex/types";
 
 type AnimalTimelineProps = {
@@ -42,12 +43,7 @@ export function AnimalTimeline({ animal, sightings }: AnimalTimelineProps) {
                 </span>
                 <span>
                   <Clock3 aria-hidden="true" size={14} />
-                  {new Intl.DateTimeFormat("pt-BR", {
-                    day: "2-digit",
-                    month: "short",
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  }).format(new Date(sighting.takenAt))}
+                  {formatSightingDateTime(sighting.takenAt)}
                 </span>
               </div>
             </article>
