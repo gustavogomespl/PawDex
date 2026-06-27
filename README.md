@@ -11,6 +11,7 @@ with upload or browser camera, and save the result locally in the browser.
 - Local seeded data with localStorage persistence.
 - Sticker-album PawDex home.
 - Upload and browser camera sighting input.
+- Python YOLO service for cat/dog detection.
 - Mock match suggestions restricted to the active place.
 
 ## Out Of Scope For This Slice
@@ -18,8 +19,25 @@ with upload or browser camera, and save the result locally in the browser.
 - Real authentication.
 - Supabase or backend APIs.
 - Real geofence or QR check-in.
-- Real ML detection or re-identification.
+- Pet re-identification and embeddings.
 - Native mobile app.
+
+## Docker
+
+```bash
+docker compose up --build
+```
+
+Open:
+
+- Web app: http://localhost:3000
+- ML health: http://localhost:8000/health
+
+The first YOLO request may download the configured model. Override it with:
+
+```bash
+PAWDEX_YOLO_MODEL=yolov8n.pt docker compose up --build
+```
 
 ## Scripts
 
@@ -31,3 +49,13 @@ npm run build
 ```
 
 Open the local dev URL printed by Next.js after `npm run dev`.
+
+## Python ML API Without Docker
+
+```bash
+cd ml-api
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```

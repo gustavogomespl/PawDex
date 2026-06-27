@@ -1,0 +1,25 @@
+services:
+  ml-api:
+    build:
+      context: ./ml-api
+    environment:
+      PAWDEX_YOLO_MODEL: ${PAWDEX_YOLO_MODEL:-yolo11n.pt}
+      PAWDEX_YOLO_CONFIDENCE: ${PAWDEX_YOLO_CONFIDENCE:-0.35}
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build:
+      context: .
+    environment:
+      ML_API_URL: http://ml-api:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      ml-api:
+        condition: service_healthy
