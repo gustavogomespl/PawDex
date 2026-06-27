@@ -12,6 +12,7 @@ from psycopg_pool import ConnectionPool
 
 def configure_connection(connection: Connection[Any]) -> None:
     register_vector(connection)
+    connection.commit()
 
 
 def create_pool(database_url: str) -> ConnectionPool:

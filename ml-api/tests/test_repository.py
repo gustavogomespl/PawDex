@@ -115,6 +115,62 @@ def test_similarity_from_distance_is_clamped():
     assert similarity_from_distance(1.75) == 0.0
 
 
+def test_configure_connection_registers_vector_and_commits(monkeypatch):
+    import importlib
+    import sys
+    import types
+
+    calls: list[tuple[str, object]] = []
+
+    def fake_register_vector(connection: object) -> None:
+        calls.append(("register_vector", connection))
+
+    class FakeConnectionType:
+        def __class_getitem__(cls, item: object) -> type[FakeConnectionType]:
+            return cls
+
+    class FakeConnectionPool:
+        pass
+
+    pgvector_module = types.ModuleType("pgvector")
+    pgvector_psycopg_module = types.ModuleType("pgvector.psycopg")
+    pgvector_psycopg_module.register_vector = fake_register_vector
+    psycopg_module = types.ModuleType("psycopg")
+    psycopg_module.Connection = FakeConnectionType
+    psycopg_rows_module = types.ModuleType("psycopg.rows")
+    psycopg_rows_module.dict_row = object()
+    psycopg_pool_module = types.ModuleType("psycopg_pool")
+    psycopg_pool_module.ConnectionPool = FakeConnectionPool
+
+    monkeypatch.setitem(sys.modules, "pgvector", pgvector_module)
+    monkeypatch.setitem(sys.modules, "pgvector.psycopg", pgvector_psycopg_module)
+    monkeypatch.setitem(sys.modules, "psycopg", psycopg_module)
+    monkeypatch.setitem(sys.modules, "psycopg.rows", psycopg_rows_module)
+    monkeypatch.setitem(sys.modules, "psycopg_pool", psycopg_pool_module)
+
+    original_database_module = sys.modules.pop("app.database", None)
+    try:
+        database = importlib.import_module("app.database")
+
+        class FakeConnection:
+            def __init__(self) -> None:
+                self.commits = 0
+
+            def commit(self) -> None:
+                self.commits += 1
+
+        connection = FakeConnection()
+
+        database.configure_connection(connection)
+
+        assert calls == [("register_vector", connection)]
+        assert connection.commits == 1
+    finally:
+        sys.modules.pop("app.database", None)
+        if original_database_module is not None:
+            sys.modules["app.database"] = original_database_module
+
+
 def test_row_to_animal_uses_frontend_field_names():
     row = animal_row(
         id="animal-mingau",
