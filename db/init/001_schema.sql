@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS sightings (
   review_status text NOT NULL DEFAULT 'confirmed' CHECK (review_status IN ('confirmed', 'needs-review')),
   created_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (id, place_id),
+  UNIQUE (id, place_id, species),
   FOREIGN KEY (animal_id, place_id, species) REFERENCES animals(id, place_id, species) ON DELETE CASCADE
 );
 
@@ -73,48 +74,13 @@ CREATE TABLE IF NOT EXISTS match_suggestions (
   place_id text NOT NULL REFERENCES places(id) ON DELETE CASCADE,
   sighting_id text NOT NULL,
   candidate_animal_id text NOT NULL,
+  species text NOT NULL CHECK (species IN ('cat', 'dog')),
   score double precision NOT NULL CHECK (score BETWEEN 0 AND 1),
   status text NOT NULL CHECK (status IN ('suggested', 'confirmed', 'rejected', 'unknown')),
   created_at timestamptz NOT NULL DEFAULT now(),
-  FOREIGN KEY (sighting_id, place_id) REFERENCES sightings(id, place_id) ON DELETE CASCADE,
-  FOREIGN KEY (candidate_animal_id, place_id) REFERENCES animals(id, place_id) ON DELETE CASCADE
+  FOREIGN KEY (sighting_id, place_id, species) REFERENCES sightings(id, place_id, species) ON DELETE CASCADE,
+  FOREIGN KEY (candidate_animal_id, place_id, species) REFERENCES animals(id, place_id, species) ON DELETE CASCADE
 );
-
-CREATE OR REPLACE FUNCTION enforce_match_suggestion_species()
-RETURNS trigger AS $$
-DECLARE
-  sighting_species text;
-  candidate_species text;
-BEGIN
-  SELECT species INTO sighting_species
-  FROM sightings
-  WHERE id = NEW.sighting_id AND place_id = NEW.place_id;
-
-  SELECT species INTO candidate_species
-  FROM animals
-  WHERE id = NEW.candidate_animal_id AND place_id = NEW.place_id;
-
-  IF sighting_species IS NULL OR candidate_species IS NULL THEN
-    RETURN NEW;
-  END IF;
-
-  IF sighting_species <> candidate_species THEN
-    RAISE EXCEPTION
-      'match_suggestions candidate species (%) must match sighting species (%)',
-      candidate_species,
-      sighting_species
-      USING ERRCODE = '23514';
-  END IF;
-
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS match_suggestions_species_consistency_trg ON match_suggestions;
-CREATE TRIGGER match_suggestions_species_consistency_trg
-BEFORE INSERT OR UPDATE OF place_id, sighting_id, candidate_animal_id ON match_suggestions
-FOR EACH ROW
-EXECUTE FUNCTION enforce_match_suggestion_species();
 
 CREATE INDEX IF NOT EXISTS animals_place_id_idx ON animals(place_id);
 CREATE INDEX IF NOT EXISTS sightings_place_id_taken_at_idx ON sightings(place_id, taken_at DESC);
