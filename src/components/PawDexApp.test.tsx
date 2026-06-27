@@ -1,11 +1,25 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { detectPetImage } from "@/domain/detection/client";
 import { PAWDEX_STORAGE_KEY } from "@/domain/pawdex/storage";
 import { demoState } from "@/domain/pawdex/seed";
 import { PawDexApp } from "./PawDexApp";
 
+vi.mock("@/domain/detection/client", () => ({
+  detectPetImage: vi.fn(),
+}));
+
+const detectPetImageMock = vi.mocked(detectPetImage);
+
 describe("PawDexApp", () => {
+  beforeEach(() => {
+    detectPetImageMock.mockResolvedValue({
+      detections: [],
+      bestDetection: null,
+    });
+  });
+
   it("renders the seeded album home", () => {
     render(<PawDexApp />);
 

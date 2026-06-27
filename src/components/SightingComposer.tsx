@@ -1,5 +1,7 @@
 import { Camera, ImageUp, Plus, X } from "lucide-react";
-import { type ChangeEvent, useRef, useState } from "react";
+import { type CSSProperties, type ChangeEvent, useRef, useState } from "react";
+import { detectPetImage } from "@/domain/detection/client";
+import type { PetDetection } from "@/domain/detection/types";
 import type { Animal, Species } from "@/domain/pawdex/types";
 
 type ExistingSightingPayload = {
@@ -31,6 +33,15 @@ export function SightingComposer({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [imageSize, setImageSize] = useState<{
+    width: number;
+    height: number;
+  } | null>(null);
+  const [detectionStatus, setDetectionStatus] = useState<
+    "idle" | "loading" | "success" | "empty" | "error"
+  >("idle");
+  const [detectionMessage, setDetectionMessage] = useState<string | null>(null);
+  const [bestDetection, setBestDetection] = useState<PetDetection | null>(null);
   const [newName, setNewName] = useState("");
   const [species, setSpecies] = useState<Species>("cat");
 
@@ -43,6 +54,8 @@ export function SightingComposer({
     }
 
     setPhotoUrl(await readFileAsDataUrl(file));
+    setImageSize(null);
+    await runDetection(file);
   }
 
   async function openCamera() {
@@ -63,7 +76,7 @@ export function SightingComposer({
     }
   }
 
-  function captureFromCamera() {
+  async function captureFromCamera() {
     const video = videoRef.current;
 
     if (!video) {
@@ -76,8 +89,11 @@ export function SightingComposer({
     canvas.height = video.videoHeight || 480;
     const context = canvas.getContext("2d");
     context?.drawImage(video, 0, 0, canvas.width, canvas.height);
-    setPhotoUrl(canvas.toDataURL("image/png"));
+    const dataUrl = canvas.toDataURL("image/png");
+    setPhotoUrl(dataUrl);
+    setImageSize(null);
     stopCamera();
+    await runDetection(dataUrlToFile(dataUrl, "camera-sighting.png"));
   }
 
   function stopCamera() {
@@ -94,6 +110,35 @@ export function SightingComposer({
     }
 
     onCreateNew({ displayName: name, species, photoUrl });
+  }
+
+  async function runDetection(file: File) {
+    setDetectionStatus("loading");
+    setDetectionMessage("Analisando imagem...");
+    setBestDetection(null);
+
+    try {
+      const response = await detectPetImage(file);
+
+      if (!response.bestDetection) {
+        setDetectionStatus("empty");
+        setDetectionMessage("Nenhum gato ou cachorro detectado.");
+        return;
+      }
+
+      setBestDetection(response.bestDetection);
+      setSpecies(response.bestDetection.species);
+      setDetectionStatus("success");
+      setDetectionMessage(
+        `${formatSpecies(response.bestDetection.species)} detectado, ${formatConfidence(
+          response.bestDetection.confidence,
+        )}`,
+      );
+    } catch {
+      setDetectionStatus("error");
+      setDetectionMessage("Nao foi possivel analisar a imagem agora.");
+      onWarning("Nao foi possivel analisar a imagem agora.");
+    }
   }
 
   return (
@@ -134,12 +179,34 @@ export function SightingComposer({
 
       {photoUrl ? (
         <div className="selected-photo">
-          <img src={photoUrl} alt="Foto selecionada" />
+          <img
+            src={photoUrl}
+            alt="Foto selecionada"
+            onLoad={(event) => {
+              setImageSize({
+                width: event.currentTarget.naturalWidth,
+                height: event.currentTarget.naturalHeight,
+              });
+            }}
+          />
+          {bestDetection ? (
+            <span
+              className="detection-box"
+              data-testid="detection-box"
+              style={getDetectionBoxStyle(bestDetection, imageSize)}
+            />
+          ) : null}
         </div>
       ) : null}
 
       {photoUrl ? (
         <div className="match-panel">
+          {detectionMessage ? (
+            <p className={`detection-status detection-status--${detectionStatus}`}>
+              {detectionMessage}
+            </p>
+          ) : null}
+
           <h3>Possiveis matches</h3>
           <div className="match-list">
             {suggestions.map((animal) => (
@@ -189,4 +256,40 @@ function readFileAsDataUrl(file: File): Promise<string> {
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
   });
+}
+
+function dataUrlToFile(dataUrl: string, fileName: string): File {
+  const [metadata, content] = dataUrl.split(",");
+  const mimeType = metadata.match(/data:(.*);base64/)?.[1] ?? "image/png";
+  const binary = atob(content);
+  const bytes = new Uint8Array(binary.length);
+
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+
+  return new File([bytes], fileName, { type: mimeType });
+}
+
+function formatSpecies(species: Species): string {
+  return species === "cat" ? "Gato" : "Cachorro";
+}
+
+function formatConfidence(confidence: number): string {
+  return `${Math.round(confidence * 100)}%`;
+}
+
+function getDetectionBoxStyle(
+  detection: PetDetection,
+  imageSize: { width: number; height: number } | null,
+): CSSProperties {
+  const width = imageSize?.width ?? Math.max(detection.box.x2, 1);
+  const height = imageSize?.height ?? Math.max(detection.box.y2, 1);
+
+  return {
+    left: `${(detection.box.x1 / width) * 100}%`,
+    top: `${(detection.box.y1 / height) * 100}%`,
+    width: `${((detection.box.x2 - detection.box.x1) / width) * 100}%`,
+    height: `${((detection.box.y2 - detection.box.y1) / height) * 100}%`,
+  };
 }

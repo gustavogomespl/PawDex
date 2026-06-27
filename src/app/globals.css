@@ -358,6 +358,52 @@ img {
   background: #17352f;
 }
 
+.selected-photo {
+  position: relative;
+  width: min(100%, 520px);
+  margin-top: 14px;
+}
+
+.selected-photo img {
+  margin-top: 0;
+}
+
+.detection-box {
+  position: absolute;
+  display: block;
+  border: 3px solid #ffcc33;
+  border-radius: 6px;
+  box-shadow: 0 0 0 1px rgba(23, 53, 47, 0.35);
+  pointer-events: none;
+}
+
+.detection-status {
+  width: fit-content;
+  max-width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #d6e0d8;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #17352f;
+  font-size: 0.92rem;
+  font-weight: 800;
+}
+
+.detection-status--loading {
+  border-color: #9fc5b5;
+}
+
+.detection-status--success {
+  border-color: #42a172;
+  color: #1d6b4a;
+}
+
+.detection-status--empty,
+.detection-status--error {
+  border-color: #dca76d;
+  color: #8a4f10;
+}
+
 .is-hidden {
   display: none;
 }
