@@ -1,11 +1,12 @@
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import asdict
-from typing import TYPE_CHECKING, Annotated, Literal, Optional
+from typing import TYPE_CHECKING, Any, Literal, Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from app.config import load_settings
 from app.detection import Detector, load_image
@@ -17,14 +18,14 @@ if TYPE_CHECKING:
 
 
 class ConfirmSightingRequest(BaseModel):
-    analysis_id: Annotated[str, Field(alias="analysisId")]
-    place_id: Annotated[str, Field(alias="placeId")]
+    analysis_id: str = Field(alias="analysisId")
+    place_id: str = Field(alias="placeId")
     decision: Literal["existing", "new"]
-    animal_id: Annotated[Optional[str], Field(alias="animalId")] = None
-    display_name: Annotated[Optional[str], Field(alias="displayName")] = None
+    animal_id: Optional[str] = Field(default=None, alias="animalId")
+    display_name: Optional[str] = Field(default=None, alias="displayName")
     species: Optional[str] = None
-    photo_url: Annotated[str, Field(alias="photoUrl")]
-    zone_label: Annotated[str, Field(alias="zoneLabel")] = "Area comum"
+    photo_url: str = Field(alias="photoUrl")
+    zone_label: str = Field(default="Area comum", alias="zoneLabel")
 
 
 def create_app(
@@ -156,8 +157,14 @@ def create_app(
         return get_analyze_service().analyze(image, place_id)
 
     @app.post("/confirm-sighting")
-    async def confirm_sighting(request: ConfirmSightingRequest) -> dict[str, object]:
-        repository = get_repository()
+    async def confirm_sighting(
+        payload: dict[str, Any] = Body(...),
+    ) -> dict[str, object]:
+        try:
+            request = ConfirmSightingRequest.model_validate(payload)
+        except ValidationError as exc:
+            raise RequestValidationError(exc.errors()) from exc
+
         try:
             if request.decision == "existing":
                 if request.animal_id is None:
@@ -165,7 +172,7 @@ def create_app(
                         status_code=400,
                         detail="animalId is required.",
                     )
-                return repository.confirm_existing_animal(
+                return get_repository().confirm_existing_animal(
                     analysis_id=request.analysis_id,
                     place_id=request.place_id,
                     animal_id=request.animal_id,
@@ -178,7 +185,7 @@ def create_app(
                     status_code=400,
                     detail="displayName and species are required.",
                 )
-            return repository.confirm_new_animal(
+            return get_repository().confirm_new_animal(
                 analysis_id=request.analysis_id,
                 place_id=request.place_id,
                 display_name=request.display_name,

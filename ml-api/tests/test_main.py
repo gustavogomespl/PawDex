@@ -311,9 +311,16 @@ def test_confirm_sighting_new_animal_returns_repository_result():
 
 
 def test_confirm_sighting_existing_requires_animal_id():
+    repository_factory_calls = 0
+
+    def repository_factory():
+        nonlocal repository_factory_calls
+        repository_factory_calls += 1
+        return FakeRepository()
+
     app = create_app(
         detector_factory=lambda: FakeDetector(DetectionResponse([], None)),
-        repository_factory=FakeRepository,
+        repository_factory=repository_factory,
     )
     client = TestClient(app)
 
@@ -329,12 +336,20 @@ def test_confirm_sighting_existing_requires_animal_id():
 
     assert response.status_code == 400
     assert response.json()["detail"] == "animalId is required."
+    assert repository_factory_calls == 0
 
 
 def test_confirm_sighting_new_requires_display_name_and_species():
+    repository_factory_calls = 0
+
+    def repository_factory():
+        nonlocal repository_factory_calls
+        repository_factory_calls += 1
+        return FakeRepository()
+
     app = create_app(
         detector_factory=lambda: FakeDetector(DetectionResponse([], None)),
-        repository_factory=FakeRepository,
+        repository_factory=repository_factory,
     )
     client = TestClient(app)
 
@@ -351,6 +366,7 @@ def test_confirm_sighting_new_requires_display_name_and_species():
 
     assert response.status_code == 400
     assert response.json()["detail"] == "displayName and species are required."
+    assert repository_factory_calls == 0
 
 
 def test_confirm_sighting_repository_value_error_returns_bad_request():
