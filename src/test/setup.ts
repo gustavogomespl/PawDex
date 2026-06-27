@@ -1,9 +1,10 @@
 import "@testing-library/jest-dom/vitest";
 import { afterEach } from "vitest";
 
-const jsdomWindow = (globalThis as { jsdom?: { window?: Window } }).jsdom?.window;
+const jsdomWindow = (globalThis as { jsdom?: { window?: Window } }).jsdom
+  ?.window;
 
-if (jsdomWindow?.localStorage) {
+if (typeof window !== "undefined" && jsdomWindow?.localStorage) {
   Object.defineProperty(window, "localStorage", {
     configurable: true,
     value: jsdomWindow.localStorage,
@@ -11,5 +12,7 @@ if (jsdomWindow?.localStorage) {
 }
 
 afterEach(() => {
-  window.localStorage.clear();
+  if (typeof window !== "undefined") {
+    window.localStorage.clear();
+  }
 });
