@@ -6,6 +6,8 @@ describe("Page", () => {
   it("renders the PawDex app shell", () => {
     render(<Page />);
 
-    expect(screen.getByRole("heading", { name: "PawDex" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Escritorio Centro" }),
+    ).toBeInTheDocument();
   });
 });
