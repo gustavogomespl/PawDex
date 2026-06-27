@@ -26,14 +26,12 @@ class EmbeddingResult:
             raise ValueError(
                 f"Embedding vector must have shape ({EMBEDDING_DIMENSION},)."
             )
-        if not np.all(np.isfinite(vector)):
-            raise ValueError("Embedding vector contains non-finite values.")
         if self.model_version != MODEL_VERSION:
             raise ValueError(f"Embedding model version must be {MODEL_VERSION}.")
         if not 0 <= self.quality_score <= 1:
             raise ValueError("Embedding quality score must be between 0 and 1.")
 
-        object.__setattr__(self, "vector", vector)
+        object.__setattr__(self, "vector", normalize_vector(vector))
         object.__setattr__(self, "quality_score", float(self.quality_score))
 
 

@@ -79,20 +79,34 @@ def test_normalize_vector_rejects_non_finite_values(vector):
 
 
 def test_embedding_result_keeps_fixed_contract():
+    vector = np.arange(1, EMBEDDING_DIMENSION + 1, dtype=np.float32)
     result = EmbeddingResult(
-        vector=np.zeros(EMBEDDING_DIMENSION, dtype=np.float32),
+        vector=vector,
         model_version=MODEL_VERSION,
         quality_score=0.8,
     )
+    vector[0] = 0
 
     assert result.vector.shape == (EMBEDDING_DIMENSION,)
+    assert result.vector.dtype == np.float32
+    assert math.isclose(float(np.linalg.norm(result.vector)), 1.0, rel_tol=1e-6)
     assert result.model_version == MODEL_VERSION
+    assert result.vector[0] != 0
 
 
 def test_embedding_result_rejects_invalid_shape():
     with pytest.raises(ValueError, match="shape"):
         EmbeddingResult(
             vector=np.zeros(2, dtype=np.float32),
+            model_version=MODEL_VERSION,
+            quality_score=0.8,
+        )
+
+
+def test_embedding_result_rejects_zero_vector():
+    with pytest.raises(ValueError, match="norm must be positive and finite"):
+        EmbeddingResult(
+            vector=np.zeros(EMBEDDING_DIMENSION, dtype=np.float32),
             model_version=MODEL_VERSION,
             quality_score=0.8,
         )
@@ -113,7 +127,7 @@ def test_embedding_result_rejects_non_finite_vector_values():
 def test_embedding_result_rejects_invalid_model_version():
     with pytest.raises(ValueError, match="model version"):
         EmbeddingResult(
-            vector=np.zeros(EMBEDDING_DIMENSION, dtype=np.float32),
+            vector=np.ones(EMBEDDING_DIMENSION, dtype=np.float32),
             model_version="other-model",
             quality_score=0.8,
         )
@@ -123,10 +137,24 @@ def test_embedding_result_rejects_invalid_model_version():
 def test_embedding_result_rejects_invalid_quality_score(quality_score):
     with pytest.raises(ValueError, match="quality score"):
         EmbeddingResult(
-            vector=np.zeros(EMBEDDING_DIMENSION, dtype=np.float32),
+            vector=np.ones(EMBEDDING_DIMENSION, dtype=np.float32),
             model_version=MODEL_VERSION,
             quality_score=quality_score,
         )
+
+
+def test_torchvision_mobilenet_without_weights_outputs_embedding_dimension():
+    torch = pytest.importorskip("torch")
+    models = pytest.importorskip("torchvision.models")
+
+    model = models.mobilenet_v3_small(weights=None)
+    model.classifier = torch.nn.Identity()
+    model.eval()
+
+    with torch.no_grad():
+        output = model(torch.zeros((1, 3, 224, 224), dtype=torch.float32))
+
+    assert tuple(output.shape) == (1, EMBEDDING_DIMENSION)
 
 
 def test_embedding_module_import_does_not_require_torch(monkeypatch):
