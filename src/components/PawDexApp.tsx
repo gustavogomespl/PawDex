@@ -8,9 +8,13 @@ import { PlaceHeader } from "./PlaceHeader";
 import { SightingComposer } from "./SightingComposer";
 import { StickerAlbumGrid } from "./StickerAlbumGrid";
 
-export function PawDexApp() {
+type PawDexAppProps = {
+  placeId: string;
+};
+
+export function PawDexApp({ placeId }: PawDexAppProps) {
   const [isComposing, setIsComposing] = useState(false);
-  const store = usePawDexStore();
+  const store = usePawDexStore(placeId);
 
   if (store.isLoadingInitialState) {
     return (

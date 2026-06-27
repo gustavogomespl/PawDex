@@ -12,8 +12,6 @@ import {
 import { loadPawDexState, savePawDexState } from "@/domain/pawdex/storage";
 import type { PawDexState, Species } from "@/domain/pawdex/types";
 
-const ACTIVE_PLACE_ID = "place-office-centro";
-
 export type ExistingSightingInput = {
   analysisId: string;
   animalId: string;
@@ -28,23 +26,22 @@ export type NewAnimalInput = {
   photoUrl: string;
 };
 
-export function usePawDexStore() {
+export function usePawDexStore(placeId: string) {
   const [state, setState] = useState<PawDexState | null>(null);
   const [stateSource, setStateSource] = useState<"remote" | "local">("remote");
   const [hasLoadedInitialState, setHasLoadedInitialState] = useState(false);
   const [warning, setWarning] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [selectedAnimalId, setSelectedAnimalId] = useState<string | null>(
-    "animal-mingau",
-  );
+  const [selectedAnimalId, setSelectedAnimalId] = useState<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
+    setHasLoadedInitialState(false);
 
     async function loadInitialState() {
       try {
         const response = await fetch(
-          `/api/pawdex/state?placeId=${ACTIVE_PLACE_ID}`,
+          `/api/pawdex/state?placeId=${encodeURIComponent(placeId)}`,
         );
 
         if (!response.ok) {
@@ -60,7 +57,7 @@ export function usePawDexStore() {
         setState(remoteState);
         setStateSource("remote");
         setSelectedAnimalId((currentAnimalId) =>
-          getSelectedAnimalId(remoteState, currentAnimalId),
+          getSelectedAnimalId(remoteState, currentAnimalId, placeId),
         );
         setWarning(null);
       } catch {
@@ -73,7 +70,7 @@ export function usePawDexStore() {
         setState(result.state);
         setStateSource("local");
         setSelectedAnimalId((currentAnimalId) =>
-          getSelectedAnimalId(result.state, currentAnimalId),
+          getSelectedAnimalId(result.state, currentAnimalId, placeId),
         );
         setWarning(formatRemoteLoadWarning(result.warning));
       } finally {
@@ -88,16 +85,15 @@ export function usePawDexStore() {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [placeId]);
 
   useEffect(() => {
     if (!hasLoadedInitialState || !state) {
       return;
     }
 
-    // Postgres is authoritative. Only persist to localStorage when we are running
-    // on the offline fallback, so remote state (including photo data URLs) never
-    // gets mirrored into the size-limited localStorage cache.
+    // Postgres is authoritative. Only persist to localStorage on the offline
+    // fallback so remote state (with photo data URLs) never fills the cache.
     if (stateSource !== "local") {
       return;
     }
@@ -109,14 +105,14 @@ export function usePawDexStore() {
     }
   }, [hasLoadedInitialState, state, stateSource]);
 
-  const place = state?.places.find((candidate) => candidate.id === ACTIVE_PLACE_ID);
+  const place = state?.places.find((candidate) => candidate.id === placeId);
   const progress = state
-    ? getPlaceProgress(state, ACTIVE_PLACE_ID)
+    ? getPlaceProgress(state, placeId)
     : { discovered: 0, total: 0 };
-  const albumSlots = state ? getAlbumSlots(state, ACTIVE_PLACE_ID) : [];
-  const animals = state ? getAnimalsForPlace(state, ACTIVE_PLACE_ID) : [];
+  const albumSlots = state ? getAlbumSlots(state, placeId) : [];
+  const animals = state ? getAnimalsForPlace(state, placeId) : [];
   const latestSightings = state
-    ? getLatestSightings(state, ACTIVE_PLACE_ID, 5)
+    ? getLatestSightings(state, placeId, 5)
     : [];
   const selectedAnimal =
     animals.find((animal) => animal.id === selectedAnimalId) ?? animals[0] ?? null;
@@ -128,7 +124,7 @@ export function usePawDexStore() {
     try {
       const response = await confirmPetSighting({
         analysisId: input.analysisId,
-        placeId: ACTIVE_PLACE_ID,
+        placeId,
         decision: "existing",
         animalId: input.animalId,
         matchConfidence: input.matchConfidence,
@@ -137,6 +133,7 @@ export function usePawDexStore() {
       });
 
       setState(response.state);
+      setStateSource("remote");
       setSelectedAnimalId(response.selectedAnimalId);
       setWarning(null);
       setNotice("Avistamento salvo na PawDex.");
@@ -150,7 +147,7 @@ export function usePawDexStore() {
     try {
       const response = await confirmPetSighting({
         analysisId: input.analysisId,
-        placeId: ACTIVE_PLACE_ID,
+        placeId,
         decision: "new",
         displayName: input.displayName,
         species: input.species,
@@ -159,6 +156,7 @@ export function usePawDexStore() {
       });
 
       setState(response.state);
+      setStateSource("remote");
       setSelectedAnimalId(response.selectedAnimalId);
       setWarning(null);
       setNotice("Novo animal adicionado ao album.");
@@ -190,8 +188,9 @@ export function usePawDexStore() {
 function getSelectedAnimalId(
   state: PawDexState,
   currentAnimalId: string | null,
+  placeId: string,
 ): string | null {
-  const animals = getAnimalsForPlace(state, ACTIVE_PLACE_ID);
+  const animals = getAnimalsForPlace(state, placeId);
 
   if (currentAnimalId && animals.some((animal) => animal.id === currentAnimalId)) {
     return currentAnimalId;

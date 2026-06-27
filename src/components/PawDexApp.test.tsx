@@ -156,7 +156,7 @@ describe("PawDexApp", () => {
       jsonResponse(await remoteStateLoad.promise),
     );
 
-    render(<PawDexApp />);
+    render(<PawDexApp placeId={activePlaceId} />);
 
     expect(screen.getByText("Carregando PawDex...")).toBeInTheDocument();
     expect(
@@ -204,7 +204,7 @@ describe("PawDexApp", () => {
     };
     window.localStorage.setItem(PAWDEX_STORAGE_KEY, JSON.stringify(savedState));
 
-    render(<PawDexApp />);
+    render(<PawDexApp placeId={activePlaceId} />);
 
     expect((await screen.findAllByText("Saved Nina")).length).toBeGreaterThan(0);
     expect(screen.getByText("8/12 encontrados")).toBeInTheDocument();
@@ -220,7 +220,7 @@ describe("PawDexApp", () => {
     const router = createFetchRouter();
     stubStateLoad(router, demoState);
 
-    render(<PawDexApp />);
+    render(<PawDexApp placeId={activePlaceId} />);
 
     await screen.findByRole("heading", { name: "Escritorio Centro" });
 
@@ -262,7 +262,7 @@ describe("PawDexApp", () => {
         selectedAnimalId: "animal-mingau",
       });
     });
-    render(<PawDexApp />);
+    render(<PawDexApp placeId={activePlaceId} />);
 
     await screen.findByRole("heading", { name: "Escritorio Centro" });
     await user.click(
@@ -322,7 +322,7 @@ describe("PawDexApp", () => {
         selectedAnimalId: "animal-nina",
       });
     });
-    render(<PawDexApp />);
+    render(<PawDexApp placeId={activePlaceId} />);
 
     await screen.findByRole("heading", { name: "Escritorio Centro" });
     await user.click(
@@ -385,7 +385,7 @@ describe("PawDexApp", () => {
         false,
       ),
     );
-    render(<PawDexApp />);
+    render(<PawDexApp placeId={activePlaceId} />);
 
     await screen.findByRole("heading", { name: "Escritorio Centro" });
     await user.click(

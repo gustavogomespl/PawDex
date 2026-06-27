@@ -25,10 +25,42 @@ class FakeRepository:
         self.healthcheck_calls = 0
         self.confirm_existing_calls = []
         self.confirm_new_calls = []
+        self.upsert_calls = []
+        self.create_place_calls = []
+        self.list_places_calls = []
         self.confirm_error: ValueError | None = None
 
     def healthcheck(self) -> None:
         self.healthcheck_calls += 1
+
+    def upsert_user(self, email: str, name: Optional[str] = None) -> dict[str, object]:
+        self.upsert_calls.append({"email": email, "name": name})
+        return {"id": "user-1", "email": email, "name": name, "avatarUrl": None}
+
+    def create_place(self, **kwargs) -> dict[str, object]:
+        self.create_place_calls.append(kwargs)
+        return {
+            "id": "place-new",
+            "name": kwargs["name"],
+            "type": kwargs["type"],
+            "privacyLevel": kwargs["privacy_level"],
+            "albumTotalSlots": kwargs.get("album_total_slots", 12),
+            "photoUrl": kwargs.get("photo_url"),
+        }
+
+    def list_places_for_user(self, user_id: str) -> list[dict[str, object]]:
+        self.list_places_calls.append(user_id)
+        return [
+            {
+                "id": "place-1",
+                "name": "Escritorio Centro",
+                "type": "office",
+                "privacyLevel": "invite-only",
+                "albumTotalSlots": 12,
+                "photoUrl": None,
+                "role": "admin",
+            }
+        ]
 
     def get_place_state(self, place_id: str) -> dict[str, object]:
         return {
@@ -429,6 +461,107 @@ def test_detect_does_not_construct_matching_dependencies():
 
     assert response.status_code == 200
     assert counters == {"repository": 0, "embedder": 0, "analyze_service": 0}
+
+
+def test_users_sync_upserts_and_returns_user():
+    repository = FakeRepository()
+    app = create_app(
+        detector_factory=lambda: FakeDetector(DetectionResponse([], None)),
+        repository_factory=lambda: repository,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/users/sync",
+        json={"email": "tutor@example.com", "name": "Tutor"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "id": "user-1",
+        "email": "tutor@example.com",
+        "name": "Tutor",
+        "avatarUrl": None,
+    }
+    assert repository.upsert_calls == [{"email": "tutor@example.com", "name": "Tutor"}]
+
+
+def test_users_sync_requires_email():
+    repository = FakeRepository()
+    app = create_app(
+        detector_factory=lambda: FakeDetector(DetectionResponse([], None)),
+        repository_factory=lambda: repository,
+    )
+    client = TestClient(app)
+
+    response = client.post("/users/sync", json={"name": "No Email"})
+
+    assert response.status_code == 422
+    assert repository.upsert_calls == []
+
+
+def test_create_place_endpoint_creates_and_returns_place():
+    repository = FakeRepository()
+    app = create_app(
+        detector_factory=lambda: FakeDetector(DetectionResponse([], None)),
+        repository_factory=lambda: repository,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/places",
+        json={
+            "name": "Escritorio Vila",
+            "type": "office",
+            "privacyLevel": "invite-only",
+            "createdBy": "user-1",
+            "photoUrl": "https://example.com/p.jpg",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["name"] == "Escritorio Vila"
+    assert body["privacyLevel"] == "invite-only"
+    assert repository.create_place_calls[0]["created_by"] == "user-1"
+    assert repository.create_place_calls[0]["name"] == "Escritorio Vila"
+
+
+def test_create_place_endpoint_rejects_invalid_privacy_level():
+    repository = FakeRepository()
+    app = create_app(
+        detector_factory=lambda: FakeDetector(DetectionResponse([], None)),
+        repository_factory=lambda: repository,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/places",
+        json={
+            "name": "X",
+            "type": "office",
+            "privacyLevel": "bogus",
+            "createdBy": "user-1",
+        },
+    )
+
+    assert response.status_code == 422
+    assert repository.create_place_calls == []
+
+
+def test_list_user_places_endpoint_returns_member_places():
+    repository = FakeRepository()
+    app = create_app(
+        detector_factory=lambda: FakeDetector(DetectionResponse([], None)),
+        repository_factory=lambda: repository,
+    )
+    client = TestClient(app)
+
+    response = client.get("/users/user-1/places")
+
+    assert response.status_code == 200
+    assert response.json()["places"][0]["role"] == "admin"
+    assert repository.list_places_calls == ["user-1"]
 
 
 def test_blocking_endpoints_run_in_threadpool_not_event_loop():

@@ -27,6 +27,25 @@ def read_upload_within_limit(file: UploadFile) -> bytes:
     return image_bytes
 
 
+class SyncUserRequest(BaseModel):
+    email: str = Field(min_length=3)
+    name: Optional[str] = None
+
+
+class CreatePlaceRequest(BaseModel):
+    name: str = Field(min_length=1)
+    # Aliased so the field does not shadow the builtin ``type`` (which breaks
+    # Pydantic schema generation for the fields declared after it).
+    place_type: str = Field(alias="type", min_length=1)
+    privacy_level: Literal["private", "invite-only", "public"] = Field(
+        alias="privacyLevel"
+    )
+    album_total_slots: int = Field(default=12, alias="albumTotalSlots", gt=0)
+    photo_url: Optional[str] = Field(default=None, alias="photoUrl")
+    created_by: str = Field(alias="createdBy")
+    geofence: Optional[dict[str, Any]] = None
+
+
 class ConfirmSightingRequest(BaseModel):
     analysis_id: str = Field(alias="analysisId")
     place_id: str = Field(alias="placeId")
@@ -154,6 +173,33 @@ def create_app(
             if result.best_detection is not None
             else None,
         }
+
+    @app.post("/users/sync")
+    def sync_user(payload: SyncUserRequest) -> dict[str, object]:
+        return get_repository().upsert_user(email=payload.email, name=payload.name)
+
+    @app.post("/places")
+    def create_place(payload: dict[str, Any] = Body(...)) -> dict[str, object]:
+        # Validated manually (like confirm-sighting) so FastAPI does not introspect
+        # an aliased body model directly, which emits spurious alias warnings.
+        try:
+            request = CreatePlaceRequest.model_validate(payload)
+        except ValidationError as exc:
+            raise RequestValidationError(exc.errors()) from exc
+
+        return get_repository().create_place(
+            name=request.name,
+            type=request.place_type,
+            privacy_level=request.privacy_level,
+            created_by=request.created_by,
+            album_total_slots=request.album_total_slots,
+            photo_url=request.photo_url,
+            geofence=request.geofence,
+        )
+
+    @app.get("/users/{user_id}/places")
+    def list_user_places(user_id: str) -> dict[str, object]:
+        return {"places": get_repository().list_places_for_user(user_id)}
 
     @app.get("/places/{place_id}/state")
     def place_state(place_id: str) -> dict[str, object]:

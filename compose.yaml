@@ -55,6 +55,7 @@ services:
     environment:
       ML_API_URL: http://ml-api:8000
       NODE_ENV: production
+      AUTH_SECRET: ${AUTH_SECRET:-pawdex-dev-auth-secret-change-me}
     ports:
       - "3000:3000"
     depends_on:

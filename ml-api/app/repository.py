@@ -65,6 +65,26 @@ class PawDexRepository(Protocol):
         zone_label: str = "Area comum",
     ) -> dict[str, Any]: ...
 
+    def upsert_user(
+        self,
+        email: str,
+        name: str | None = None,
+    ) -> dict[str, Any]: ...
+
+    def create_place(
+        self,
+        *,
+        name: str,
+        type: str,
+        privacy_level: str,
+        created_by: str,
+        album_total_slots: int = 12,
+        photo_url: str | None = None,
+        geofence: dict[str, Any] | None = None,
+    ) -> dict[str, Any]: ...
+
+    def list_places_for_user(self, user_id: str) -> list[dict[str, Any]]: ...
+
 
 def similarity_from_distance(distance: float) -> float:
     return round(max(0.0, min(1.0, 1.0 - distance)), 4)
@@ -86,6 +106,16 @@ def row_to_place(row: dict[str, Any]) -> dict[str, Any]:
         "type": row["type"],
         "privacyLevel": row["privacy_level"],
         "albumTotalSlots": row["album_total_slots"],
+        "photoUrl": row.get("photo_url"),
+    }
+
+
+def row_to_user(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(row["id"]),
+        "email": row["email"],
+        "name": row["name"],
+        "avatarUrl": row["avatar_url"],
     }
 
 
@@ -125,6 +155,84 @@ class PostgresPawDexRepository:
     def healthcheck(self) -> None:
         with self.pool.connection() as connection:
             connection.execute("SELECT 1").fetchone()
+
+    def upsert_user(self, email: str, name: str | None = None) -> dict[str, Any]:
+        sql = """
+            INSERT INTO users (email, name)
+            VALUES (%s, %s)
+            ON CONFLICT (email)
+            DO UPDATE SET name = COALESCE(EXCLUDED.name, users.name)
+            RETURNING id, email, name, avatar_url
+        """
+        with self.pool.connection() as connection:
+            row = connection.execute(sql, (email, name)).fetchone()
+        if row is None:
+            raise RuntimeError("User upsert did not return a row.")
+        return row_to_user(row)
+
+    def create_place(
+        self,
+        *,
+        name: str,
+        type: str,
+        privacy_level: str,
+        created_by: str,
+        album_total_slots: int = 12,
+        photo_url: str | None = None,
+        geofence: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        place_id = _new_id("place")
+        geo = geofence or {}
+        with self.pool.connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO places (
+                  id, name, type, privacy_level, album_total_slots,
+                  photo_url, geofence_lat, geofence_lng, geofence_radius_m
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    place_id,
+                    name,
+                    type,
+                    privacy_level,
+                    album_total_slots,
+                    photo_url,
+                    geo.get("lat"),
+                    geo.get("lng"),
+                    geo.get("radiusM"),
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO place_members (place_id, user_id, role, status)
+                VALUES (%s, %s, 'admin', 'approved')
+                """,
+                (place_id, created_by),
+            )
+            place = connection.execute(
+                "SELECT * FROM places WHERE id = %s",
+                (place_id,),
+            ).fetchone()
+
+        if place is None:
+            raise RuntimeError("Place creation did not return a row.")
+        return row_to_place(place)
+
+    def list_places_for_user(self, user_id: str) -> list[dict[str, Any]]:
+        sql = """
+            SELECT p.*, pm.role
+            FROM places p
+            JOIN place_members pm
+              ON pm.place_id = p.id
+            WHERE pm.user_id = %s
+              AND pm.status = 'approved'
+            ORDER BY p.created_at ASC
+        """
+        with self.pool.connection() as connection:
+            rows = connection.execute(sql, (user_id,)).fetchall()
+        return [{**row_to_place(row), "role": row["role"]} for row in rows]
 
     def get_place_state(self, place_id: str) -> dict[str, Any]:
         with self.pool.connection() as connection:

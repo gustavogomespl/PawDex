@@ -42,3 +42,33 @@ def test_baseline_migration_covers_every_db_init_index():
 def test_baseline_migration_is_the_alembic_root():
     assert 'down_revision = None' in BASELINE
     assert 'revision = "0001_baseline"' in BASELINE
+
+
+def _read_migration(filename: str) -> str:
+    return (
+        REPO_ROOT / "ml-api" / "migrations" / "versions" / filename
+    ).read_text()
+
+
+def test_membership_migration_chains_from_baseline():
+    sql = _read_migration("0002_users_membership.py")
+    assert 'revision = "0002_users_membership"' in sql
+    assert 'down_revision = "0001_baseline"' in sql
+
+
+def test_membership_migration_defines_users_membership_and_ownership():
+    sql = _read_migration("0002_users_membership.py").lower()
+    assert "create table if not exists users" in sql
+    assert "create table if not exists place_members" in sql
+    # ownership column added to the user-generated content tables
+    assert "created_by" in sql
+
+
+def test_place_profile_migration_chains_and_adds_columns():
+    sql = _read_migration("0003_place_profile.py")
+    assert 'revision = "0003_place_profile"' in sql
+    assert 'down_revision = "0002_users_membership"' in sql
+    low = sql.lower()
+    assert "alter table places" in low
+    assert "photo_url" in low
+    assert "geofence" in low

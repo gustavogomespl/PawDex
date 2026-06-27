@@ -110,8 +110,15 @@ Corrigir os defeitos confirmados de maior raio de impacto:
 - **Ops:** `restart: unless-stopped`, limites de memória no ml-api, logging estruturado + Sentry, CORS via env.
 
 ### Fase C — Fundação multiusuário/multilocal
-- **Auth.js (NextAuth v5)** — Google + e-mail magic link; tabela `users`; gate em `src/middleware.ts`.
-- **Membros + ownership:** `place_members(place_id,user_id,role,status)`; FKs `created_by`/`user_id` em `animals`/`sightings`/`pending_sighting_analyses`.
+> 🟡 **Em andamento — 2026-06-27.** ✅ **C1 (modelo de dados)**, ✅ **C2 (auth dev-first)** e ✅ **C3 (multilocal)** feitos e verificados. ⏳ Faltam **C4 (autorização/enforcement)** e **C5 (fluxos de entrada)**. Estratégia escolhida: Auth.js v5 + sessão **JWT** + tabela `users` própria (sem adapter de DB); login dev por e-mail (sem credenciais externas); Google/SMTP entram depois via env.
+>
+> **C3** — migração `0003_place_profile.py` (photo_url + geofence em places); `repository.create_place` (criador vira admin/approved) + `list_places_for_user` (membros aprovados); endpoints `POST /places` e `GET /users/{id}/places`; `usePawDexStore(placeId)` e `PawDexApp({placeId})` (sem `ACTIVE_PLACE_ID` fixo); rotas `/places` (meus lugares), `/places/[placeId]`, `/places/new` + `CreatePlaceForm`; proxy `/api/places` (sessão); `/` → redireciona pra `/places`. Verificado: pytest 86, vitest 69, tsc, next build, e **pg real** (create→list com isolamento por membership: outro usuário vê 0 lugares).
+>
+> **C1** — migração `0002_users_membership.py`: `users`, `place_members` (role/status), `created_by` em animals/sightings/pending. Verificado em pgvector real (upgrade/downgrade/idempotência).
+> **C2** — `next-auth@5.0.0-beta.31` (peer deps confirmam Next 16/React 19): `src/auth.ts` (Credentials dev provider, `trustHost`, callbacks jwt/session), `src/app/api/auth/[...nextauth]/route.ts`, `src/app/signin` + `SignInForm`, augment de tipos; ml-api `POST /users/sync` + `repository.upsert_user` (ON CONFLICT). Verificado: dev-auth (vitest), upsert (pytest + pg real idempotente), `tsc`, `next build`, vitest 69. **Pendente de verificação:** o clique de login no browser ponta a ponta (precisa da stack completa rodando). **Gating de rotas ainda NÃO ativado** (fica na C4) para não quebrar os testes/fluxos atuais.
+
+- **Auth.js (NextAuth v5)** — ✅ dev-first feito (Google + e-mail magic link reais entram depois via env). Gate em `src/middleware.ts` → **C4**.
+- **Membros + ownership:** ✅ `place_members(place_id,user_id,role,status)`; FK `created_by` em `animals`/`sightings`/`pending_sighting_analyses` (migração `0002`).
 - **Aplicar privacidade:** passar `user_id` em `get_place_state`/`/places/{id}/state`/analyze/confirm; checar membership contra `privacy_level`; token interno compartilhado web↔ml-api.
 - **Remover constantes hardcoded** (`usePawDexStore.ts:15,37`); mover para `/places/[placeId]`; timezone derivada do Place.
 - **Ciclo de vida do lugar:** `/places` ("meus lugares"), form de criar lugar (`POST /places`, adicionar `photo_url`, geofence lat/lng/radius).
