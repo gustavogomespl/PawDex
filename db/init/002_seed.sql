@@ -118,6 +118,7 @@ INSERT INTO sightings (
   species,
   zone_label,
   taken_at,
+  detector_confidence,
   match_confidence,
   review_status
 )
@@ -130,6 +131,7 @@ VALUES
     'cat',
     'Recepcao',
     '2026-06-24T13:20:00.000Z',
+    0.87,
     0.88,
     'confirmed'
   ),
@@ -141,6 +143,7 @@ VALUES
     'dog',
     'Jardim lateral',
     '2026-06-21T11:05:00.000Z',
+    0.86,
     0.82,
     'confirmed'
   ),
@@ -152,6 +155,7 @@ VALUES
     'dog',
     'Andar 3',
     '2026-06-25T15:00:00.000Z',
+    0.8,
     0.75,
     'confirmed'
   ),
@@ -163,6 +167,7 @@ VALUES
     'cat',
     'Estacionamento',
     '2026-06-26T18:25:00.000Z',
+    0.84,
     0.79,
     'confirmed'
   )
