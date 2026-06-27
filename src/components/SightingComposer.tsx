@@ -1,22 +1,29 @@
 import { Camera, ImageUp, Plus, X } from "lucide-react";
 import { type CSSProperties, type ChangeEvent, useRef, useState } from "react";
-import { detectPetImage } from "@/domain/detection/client";
 import type { PetDetection } from "@/domain/detection/types";
-import type { Animal, Species } from "@/domain/pawdex/types";
+import { analyzePetSighting } from "@/domain/matching/client";
+import type {
+  MatchCandidate,
+  MatchRecommendation,
+} from "@/domain/matching/types";
+import type { Species } from "@/domain/pawdex/types";
 
 type ExistingSightingPayload = {
+  analysisId: string;
   animalId: string;
   photoUrl: string;
+  matchConfidence: number;
 };
 
 type NewAnimalPayload = {
+  analysisId: string;
   displayName: string;
   species: Species;
   photoUrl: string;
 };
 
 type SightingComposerProps = {
-  suggestions: Animal[];
+  placeId: string;
   onAddToExisting: (payload: ExistingSightingPayload) => void;
   onCreateNew: (payload: NewAnimalPayload) => void;
   onCancel: () => void;
@@ -24,7 +31,7 @@ type SightingComposerProps = {
 };
 
 export function SightingComposer({
-  suggestions,
+  placeId,
   onAddToExisting,
   onCreateNew,
   onCancel,
@@ -42,6 +49,10 @@ export function SightingComposer({
   >("idle");
   const [detectionMessage, setDetectionMessage] = useState<string | null>(null);
   const [bestDetection, setBestDetection] = useState<PetDetection | null>(null);
+  const [analysisId, setAnalysisId] = useState<string | null>(null);
+  const [matches, setMatches] = useState<MatchCandidate[]>([]);
+  const [recommendation, setRecommendation] =
+    useState<MatchRecommendation | null>(null);
   const [newName, setNewName] = useState("");
   const [species, setSpecies] = useState<Species>("cat");
 
@@ -109,29 +120,54 @@ export function SightingComposer({
       return;
     }
 
-    onCreateNew({ displayName: name, species, photoUrl });
+    if (!analysisId) {
+      onWarning("Analise a foto antes de confirmar o avistamento.");
+      return;
+    }
+
+    onCreateNew({ analysisId, displayName: name, species, photoUrl });
+  }
+
+  function handleConfirmMatch(match: MatchCandidate) {
+    if (!analysisId || !photoUrl) {
+      onWarning("Analise a foto antes de confirmar o avistamento.");
+      return;
+    }
+
+    onAddToExisting({
+      analysisId,
+      animalId: match.animalId,
+      photoUrl,
+      matchConfidence: match.score,
+    });
   }
 
   async function runDetection(file: File) {
     setDetectionStatus("loading");
     setDetectionMessage("Analisando imagem...");
     setBestDetection(null);
+    setAnalysisId(null);
+    setMatches([]);
+    setRecommendation(null);
 
     try {
-      const response = await detectPetImage(file);
+      const response = await analyzePetSighting(file, placeId);
+      setAnalysisId(response.analysisId);
+      setMatches(response.matches);
+      setRecommendation(response.recommendation);
 
-      if (!response.bestDetection) {
+      if (!response.detection || response.recommendation === "no_pet_detected") {
         setDetectionStatus("empty");
         setDetectionMessage("Nenhum gato ou cachorro detectado.");
         return;
       }
 
-      setBestDetection(response.bestDetection);
-      setSpecies(response.bestDetection.species);
+      setBestDetection(response.detection);
+      setSpecies(response.detection.species);
       setDetectionStatus("success");
       setDetectionMessage(
-        `${formatSpecies(response.bestDetection.species)} detectado, ${formatConfidence(
-          response.bestDetection.confidence,
+        `${formatSpecies(response.detection.species)} detectado, ${formatConfidence(
+          response.detection.confidence,
         )}`,
       );
     } catch {
@@ -208,12 +244,17 @@ export function SightingComposer({
           ) : null}
 
           <h3>Possiveis matches</h3>
+          {recommendation && recommendation !== "no_pet_detected" ? (
+            <p className="matching-recommendation">
+              {formatRecommendation(recommendation, matches[0])}
+            </p>
+          ) : null}
           <div className="match-list">
-            {suggestions.map((animal) => (
+            {matches.map((animal) => (
               <button
-                key={animal.id}
+                key={animal.animalId}
                 type="button"
-                onClick={() => onAddToExisting({ animalId: animal.id, photoUrl })}
+                onClick={() => handleConfirmMatch(animal)}
               >
                 <img src={animal.primaryPhotoUrl} alt="" />
                 <span>Confirmar como {animal.displayName}</span>
@@ -277,6 +318,27 @@ function formatSpecies(species: Species): string {
 
 function formatConfidence(confidence: number): string {
   return `${Math.round(confidence * 100)}%`;
+}
+
+function formatRecommendation(
+  recommendation: MatchRecommendation,
+  firstMatch: MatchCandidate | undefined,
+): string {
+  if (recommendation === "needs_better_photo") {
+    return "Foto com baixa qualidade para matching. Tente outra imagem ou cadastre manualmente.";
+  }
+
+  if (recommendation === "probably_new") {
+    return "Parece ser um animal novo neste local.";
+  }
+
+  if (recommendation === "possible_existing" && firstMatch) {
+    return `Parece ser ${firstMatch.displayName}, ${formatConfidence(
+      firstMatch.score,
+    )} de similaridade.`;
+  }
+
+  return "Nenhum gato ou cachorro detectado.";
 }
 
 function getDetectionBoxStyle(
