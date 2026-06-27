@@ -1,0 +1,413 @@
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any
+
+from app.repository import (
+    PostgresPawDexRepository,
+    row_to_animal,
+    similarity_from_distance,
+)
+
+
+@dataclass
+class RecordedQuery:
+    sql: str
+    params: tuple[Any, ...] | None
+
+
+class FakeCursor:
+    def __init__(
+        self,
+        row: dict[str, Any] | None = None,
+        rows: list[dict[str, Any]] | None = None,
+    ):
+        self.row = row
+        self.rows = rows or []
+
+    def fetchone(self) -> dict[str, Any] | None:
+        return self.row
+
+    def fetchall(self) -> list[dict[str, Any]]:
+        return self.rows
+
+
+class RecordingConnection:
+    def __init__(
+        self,
+        *,
+        pending_analysis: dict[str, Any] | None = None,
+        pending_insert_id: str = "analysis-created",
+        place: dict[str, Any] | None = None,
+        animals: list[dict[str, Any]] | None = None,
+        sightings: list[dict[str, Any]] | None = None,
+        match_rows: list[dict[str, Any]] | None = None,
+    ):
+        self.pending_analysis = pending_analysis
+        self.pending_insert_id = pending_insert_id
+        self.place = place
+        self.animals = animals or []
+        self.sightings = sightings or []
+        self.match_rows = match_rows or []
+        self.queries: list[RecordedQuery] = []
+
+    def __enter__(self) -> RecordingConnection:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        return None
+
+    def execute(self, sql: str, params: tuple[Any, ...] | None = None) -> FakeCursor:
+        self.queries.append(RecordedQuery(sql=sql, params=params))
+        normalized = " ".join(sql.lower().split())
+
+        if normalized.startswith("select 1"):
+            return FakeCursor(row={"?column?": 1})
+        if "insert into pending_sighting_analyses" in normalized:
+            return FakeCursor(row={"id": self.pending_insert_id})
+        if normalized.startswith("select * from pending_sighting_analyses"):
+            return FakeCursor(row=self.pending_analysis)
+        if "from animal_embeddings" in normalized and "join animals" in normalized:
+            return FakeCursor(rows=self.match_rows)
+        if normalized.startswith("select * from places"):
+            return FakeCursor(row=self.place)
+        if normalized.startswith("select * from animals"):
+            return FakeCursor(rows=self.animals)
+        if normalized.startswith("select * from sightings"):
+            return FakeCursor(rows=self.sightings)
+
+        return FakeCursor()
+
+
+class RecordingPool:
+    def __init__(self, connection: RecordingConnection):
+        self.connection_obj = connection
+
+    def connection(self) -> RecordingConnection:
+        return self.connection_obj
+
+
+def test_similarity_from_distance_is_clamped():
+    assert similarity_from_distance(-0.25) == 1.0
+    assert similarity_from_distance(0.12345) == 0.8765
+    assert similarity_from_distance(1.75) == 0.0
+
+
+def test_row_to_animal_uses_frontend_field_names():
+    row = animal_row(
+        id="animal-mingau",
+        place_id="place-office",
+        first_seen_at=datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc),
+        last_seen_at=datetime(2026, 6, 2, 15, 30, tzinfo=timezone.utc),
+    )
+
+    animal = row_to_animal(row)
+
+    assert animal == {
+        "id": "animal-mingau",
+        "placeId": "place-office",
+        "species": "cat",
+        "displayName": "Mingau",
+        "status": "community",
+        "description": "Gato claro.",
+        "colorTags": ["branco", "creme"],
+        "rarityLabel": "Comum",
+        "primaryPhotoUrl": "https://example.com/mingau.jpg",
+        "firstSeenAt": "2026-06-01T12:00:00Z",
+        "lastSeenAt": "2026-06-02T15:30:00Z",
+    }
+    assert "place_id" not in animal
+    assert "display_name" not in animal
+    assert "primary_photo_url" not in animal
+
+
+def test_find_matches_restricts_vector_search_to_place_and_species():
+    embedding = [0.1, 0.2, 0.3]
+    connection = RecordingConnection(
+        match_rows=[
+            {
+                "animal_id": "animal-mingau",
+                "display_name": "Mingau",
+                "species": "cat",
+                "primary_photo_url": "https://example.com/mingau.jpg",
+                "distance": 0.2,
+            }
+        ]
+    )
+    repository = PostgresPawDexRepository(RecordingPool(connection))
+
+    matches = repository.find_matches(
+        place_id="place-office",
+        species="cat",
+        embedding=embedding,
+        limit=2,
+    )
+
+    query = only_query_containing(connection, "from animal_embeddings")
+    assert "ae.embedding <=> %s" in query.sql
+    assert "ae.place_id = %s" in query.sql
+    assert "a.species = %s" in query.sql
+    assert query.params == (embedding, "place-office", "cat", 2)
+    assert matches[0].animal_id == "animal-mingau"
+    assert matches[0].score == 0.8
+
+
+def test_get_place_state_returns_frontend_state_and_album_slots():
+    connection = RecordingConnection(
+        place=place_row(album_total_slots=3),
+        animals=[animal_row(id="animal-mingau")],
+        sightings=[sighting_row(id="sighting-mingau-001")],
+    )
+    repository = PostgresPawDexRepository(RecordingPool(connection))
+
+    state = repository.get_place_state("place-office")
+
+    assert state["places"][0]["privacyLevel"] == "invite-only"
+    assert state["animals"][0]["displayName"] == "Mingau"
+    assert state["sightings"][0]["photoUrl"] == "https://example.com/sighting.jpg"
+    assert state["albumSlots"] == [
+        {
+            "slotNumber": 1,
+            "placeId": "place-office",
+            "animalId": "animal-mingau",
+            "isDiscovered": True,
+        },
+        {
+            "slotNumber": 2,
+            "placeId": "place-office",
+            "animalId": None,
+            "isDiscovered": False,
+        },
+        {
+            "slotNumber": 3,
+            "placeId": "place-office",
+            "animalId": None,
+            "isDiscovered": False,
+        },
+    ]
+
+
+def test_create_pending_analysis_inserts_parameterized_row_and_returns_id():
+    embedding = [0.1, 0.2, 0.3]
+    connection = RecordingConnection(pending_insert_id="analysis-123")
+    repository = PostgresPawDexRepository(RecordingPool(connection))
+
+    analysis_id = repository.create_pending_analysis(
+        place_id="place-office",
+        species="cat",
+        detector_confidence=0.91,
+        detection_box={"x1": 1, "y1": 2, "x2": 10, "y2": 12},
+        model_version="mobilenet-v3",
+        embedding=embedding,
+        quality_score=0.82,
+    )
+
+    insert = only_query_containing(connection, "insert into pending_sighting_analyses")
+    values = insert_values_by_column(insert)
+    assert analysis_id == "analysis-123"
+    assert values["place_id"] == "place-office"
+    assert values["species"] == "cat"
+    assert values["embedding"] is embedding
+    assert "%s" in insert.sql
+
+
+def test_confirm_existing_animal_inserts_embedding_for_confirmed_sighting_animal():
+    embedding = [0.4, 0.5, 0.6]
+    connection = RecordingConnection(
+        pending_analysis=pending_analysis_row(species="cat", embedding=embedding),
+        place=place_row(),
+        animals=[animal_row(id="animal-mingau")],
+        sightings=[sighting_row(animal_id="animal-mingau")],
+    )
+    repository = PostgresPawDexRepository(RecordingPool(connection))
+
+    result = repository.confirm_existing_animal(
+        analysis_id="analysis-1",
+        place_id="place-office",
+        animal_id="animal-mingau",
+        photo_url="https://example.com/new-sighting.jpg",
+        zone_label="Recepcao",
+    )
+
+    sighting = insert_values_by_column(only_query_containing(connection, "insert into sightings"))
+    animal_embedding = insert_values_by_column(
+        only_query_containing(connection, "insert into animal_embeddings")
+    )
+    assert re.fullmatch(r"sighting-[0-9a-f]{12}", sighting["id"])
+    assert sighting["animal_id"] == "animal-mingau"
+    assert sighting["species"] == "cat"
+    assert animal_embedding["animal_id"] == sighting["animal_id"]
+    assert animal_embedding["sighting_id"] == sighting["id"]
+    assert animal_embedding["embedding"] is embedding
+    assert result["selectedAnimalId"] == "animal-mingau"
+
+
+def test_confirm_new_animal_creates_animal_and_embedding_for_same_animal():
+    embedding = [0.7, 0.8, 0.9]
+    connection = RecordingConnection(
+        pending_analysis=pending_analysis_row(species="cat", embedding=embedding),
+        place=place_row(),
+        animals=[animal_row(id="animal-created", display_name="Nina")],
+        sightings=[sighting_row(animal_id="animal-created")],
+    )
+    repository = PostgresPawDexRepository(RecordingPool(connection))
+
+    result = repository.confirm_new_animal(
+        analysis_id="analysis-1",
+        place_id="place-office",
+        display_name="Nina",
+        species="cat",
+        photo_url="https://example.com/nina.jpg",
+        zone_label="Jardim",
+    )
+
+    animal = insert_values_by_column(only_query_containing(connection, "insert into animals"))
+    sighting = insert_values_by_column(only_query_containing(connection, "insert into sightings"))
+    animal_embedding = insert_values_by_column(
+        only_query_containing(connection, "insert into animal_embeddings")
+    )
+    assert re.fullmatch(r"animal-[0-9a-f]{12}", animal["id"])
+    assert animal["display_name"] == "Nina"
+    assert animal["species"] == "cat"
+    assert animal["status"] == "unknown"
+    assert animal["color_tags"] == []
+    assert sighting["animal_id"] == animal["id"]
+    assert sighting["species"] == animal["species"]
+    assert animal_embedding["animal_id"] == animal["id"]
+    assert animal_embedding["sighting_id"] == sighting["id"]
+    assert animal_embedding["embedding"] is embedding
+    assert result["selectedAnimalId"] == animal["id"]
+
+
+def test_confirmation_match_suggestion_inserts_include_species_if_present():
+    connection = RecordingConnection(
+        pending_analysis=pending_analysis_row(species="cat"),
+        place=place_row(),
+        animals=[animal_row(id="animal-mingau")],
+        sightings=[sighting_row(animal_id="animal-mingau")],
+    )
+    repository = PostgresPawDexRepository(RecordingPool(connection))
+
+    repository.confirm_existing_animal(
+        analysis_id="analysis-1",
+        place_id="place-office",
+        animal_id="animal-mingau",
+        photo_url="https://example.com/new-sighting.jpg",
+        zone_label="Recepcao",
+    )
+
+    for insert in queries_containing(connection, "insert into match_suggestions"):
+        assert "species" in insert_columns(insert)
+
+
+def only_query_containing(
+    connection: RecordingConnection,
+    text: str,
+) -> RecordedQuery:
+    matches = queries_containing(connection, text)
+    assert len(matches) == 1
+    return matches[0]
+
+
+def queries_containing(
+    connection: RecordingConnection,
+    text: str,
+) -> list[RecordedQuery]:
+    return [query for query in connection.queries if text.lower() in query.sql.lower()]
+
+
+def insert_values_by_column(query: RecordedQuery) -> dict[str, Any]:
+    assert query.params is not None
+    columns = insert_columns(query)
+    assert len(columns) == len(query.params)
+    return dict(zip(columns, query.params))
+
+
+def insert_columns(query: RecordedQuery) -> list[str]:
+    match = re.search(
+        r"insert\s+into\s+\w+\s*\((.*?)\)\s*values",
+        query.sql,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    assert match is not None
+    return [column.strip() for column in match.group(1).split(",")]
+
+
+def pending_analysis_row(
+    *,
+    species: str = "cat",
+    embedding: list[float] | None = None,
+) -> dict[str, Any]:
+    return {
+        "id": "analysis-1",
+        "place_id": "place-office",
+        "species": species,
+        "detector_confidence": 0.91,
+        "detection_box": {"x1": 1, "y1": 2, "x2": 10, "y2": 12},
+        "model_version": "mobilenet-v3",
+        "embedding": embedding or [0.1, 0.2, 0.3],
+        "quality_score": 0.82,
+        "created_at": datetime(2026, 6, 3, 9, 0, tzinfo=timezone.utc),
+    }
+
+
+def place_row(*, album_total_slots: int = 12) -> dict[str, Any]:
+    return {
+        "id": "place-office",
+        "name": "Escritorio Centro",
+        "type": "office",
+        "privacy_level": "invite-only",
+        "album_total_slots": album_total_slots,
+        "created_at": datetime(2026, 6, 1, 10, 0, tzinfo=timezone.utc),
+    }
+
+
+def animal_row(
+    *,
+    id: str,
+    place_id: str = "place-office",
+    species: str = "cat",
+    display_name: str = "Mingau",
+    first_seen_at: datetime | None = None,
+    last_seen_at: datetime | None = None,
+) -> dict[str, Any]:
+    return {
+        "id": id,
+        "place_id": place_id,
+        "species": species,
+        "display_name": display_name,
+        "status": "community",
+        "description": "Gato claro.",
+        "color_tags": ["branco", "creme"],
+        "rarity_label": "Comum",
+        "primary_photo_url": "https://example.com/mingau.jpg",
+        "first_seen_at": first_seen_at
+        or datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc),
+        "last_seen_at": last_seen_at
+        or datetime(2026, 6, 2, 15, 30, tzinfo=timezone.utc),
+        "created_at": datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc),
+    }
+
+
+def sighting_row(
+    *,
+    id: str = "sighting-mingau-001",
+    place_id: str = "place-office",
+    animal_id: str = "animal-mingau",
+    species: str = "cat",
+) -> dict[str, Any]:
+    return {
+        "id": id,
+        "place_id": place_id,
+        "animal_id": animal_id,
+        "photo_url": "https://example.com/sighting.jpg",
+        "species": species,
+        "zone_label": "Recepcao",
+        "taken_at": datetime(2026, 6, 2, 15, 30, tzinfo=timezone.utc),
+        "detector_confidence": 0.91,
+        "match_confidence": 0.8,
+        "review_status": "confirmed",
+        "created_at": datetime(2026, 6, 2, 15, 30, tzinfo=timezone.utc),
+    }
