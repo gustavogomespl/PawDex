@@ -73,6 +73,82 @@ describe("POST /api/confirm-sighting", () => {
     );
   });
 
+  it("returns 400 for malformed JSON without calling the ML API", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await POST(
+      new Request("http://localhost/api/confirm-sighting", {
+        method: "POST",
+        body: "{",
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      state: emptyState,
+      selectedAnimalId: "",
+      error: "Confirmacao invalida.",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["array", []],
+    ["null", null],
+  ])(
+    "returns 400 for valid JSON %s without calling the ML API",
+    async (_, body) => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+
+      const response = await POST(
+        new Request("http://localhost/api/confirm-sighting", {
+          method: "POST",
+          body: JSON.stringify(body),
+          headers: { "content-type": "application/json" },
+        }),
+      );
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({
+        state: emptyState,
+        selectedAnimalId: "",
+        error: "Confirmacao invalida.",
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("returns 502 when the ML API rejects the confirmation", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response("{}", { status: 500 })),
+    );
+
+    const response = await POST(
+      new Request("http://localhost/api/confirm-sighting", {
+        method: "POST",
+        body: JSON.stringify({
+          analysisId: "analysis-1",
+          placeId: "park-1",
+          decision: "existing",
+          animalId: "animal-1",
+          photoUrl: "/uploads/pet.png",
+        }),
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({
+      state: emptyState,
+      selectedAnimalId: "",
+      error: "Nao foi possivel confirmar o avistamento agora.",
+    });
+  });
+
   it("returns 502 when the ML API is unavailable", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     const payload = {

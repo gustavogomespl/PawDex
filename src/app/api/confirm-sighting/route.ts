@@ -15,7 +15,28 @@ function emptyResponse(error: string): ConfirmSightingResponse {
 }
 
 export async function POST(request: Request) {
-  const payload = (await request.json()) as ConfirmSightingPayload;
+  let payload: ConfirmSightingPayload;
+
+  try {
+    const parsedPayload = (await request.json()) as unknown;
+
+    if (
+      typeof parsedPayload !== "object" ||
+      parsedPayload === null ||
+      Array.isArray(parsedPayload)
+    ) {
+      return NextResponse.json(emptyResponse("Confirmacao invalida."), {
+        status: 400,
+      });
+    }
+
+    payload = parsedPayload as ConfirmSightingPayload;
+  } catch {
+    return NextResponse.json(emptyResponse("Confirmacao invalida."), {
+      status: 400,
+    });
+  }
+
   const mlApiUrl = process.env.ML_API_URL ?? DEFAULT_ML_API_URL;
 
   try {
