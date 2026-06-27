@@ -26,6 +26,8 @@ class EmbeddingResult:
             raise ValueError(
                 f"Embedding vector must have shape ({EMBEDDING_DIMENSION},)."
             )
+        if not np.all(np.isfinite(vector)):
+            raise ValueError("Embedding vector contains non-finite values.")
         if self.model_version != MODEL_VERSION:
             raise ValueError(f"Embedding model version must be {MODEL_VERSION}.")
         if not 0 <= self.quality_score <= 1:
@@ -74,6 +76,9 @@ def estimate_quality_score(image: Image.Image) -> float:
 
 def normalize_vector(vector: np.ndarray) -> np.ndarray:
     normalized = np.asarray(vector, dtype=np.float32)
+    if not np.all(np.isfinite(normalized)):
+        raise ValueError("Embedding vector contains non-finite values.")
+
     norm = float(np.linalg.norm(normalized))
     if norm == 0.0:
         return normalized.copy()
