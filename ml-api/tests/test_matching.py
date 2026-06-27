@@ -8,7 +8,11 @@ from PIL import Image
 
 from app.detection import BoundingBox, DetectionResponse, PetDetection
 from app.embedding import EMBEDDING_DIMENSION, MODEL_VERSION, EmbeddingResult
-from app.matching import AnalyzeSightingService, recommendation_from_matches
+from app.matching import (
+    MIN_QUALITY_SCORE,
+    AnalyzeSightingService,
+    recommendation_from_matches,
+)
 from app.repository import MatchCandidate
 
 
@@ -90,6 +94,37 @@ def test_low_quality_embedding_skips_repository_search_and_pending_creation():
     }
     assert repository.find_match_calls == []
     assert repository.pending_calls == []
+
+
+def test_embedder_receives_cropped_detection_image():
+    detection = pet_detection(box=BoundingBox(10, 20, 70, 85))
+    embedder = SizeRecordingEmbedder(quality_score=0.9)
+    service = AnalyzeSightingService(
+        detector=FakeDetector(best_detection=detection),
+        embedder=embedder,
+        repository=RecordingRepository(),
+    )
+
+    service.analyze(Image.new("RGB", (200, 150), "white"), "place-office")
+
+    assert embedder.image_sizes == [(60, 65)]
+
+
+def test_quality_score_at_minimum_threshold_still_creates_pending_analysis():
+    repository = RecordingRepository()
+    service = AnalyzeSightingService(
+        detector=FakeDetector(best_detection=pet_detection()),
+        embedder=FakeEmbedder(quality_score=MIN_QUALITY_SCORE),
+        repository=repository,
+    )
+
+    result = service.analyze(Image.new("RGB", (100, 100), "white"), "place-office")
+
+    assert result["analysisId"] == "analysis-created"
+    assert result["recommendation"] == "probably_new"
+    assert len(repository.find_match_calls) == 1
+    assert len(repository.pending_calls) == 1
+    assert repository.pending_calls[0]["quality_score"] == MIN_QUALITY_SCORE
 
 
 def test_probably_new_without_matches_still_creates_pending_analysis():
@@ -196,6 +231,16 @@ class FakeEmbedder:
 class FailingEmbedder:
     def embed(self, image: Image.Image) -> EmbeddingResult:
         raise AssertionError("Embedder should not be called.")
+
+
+class SizeRecordingEmbedder(FakeEmbedder):
+    def __init__(self, quality_score: float):
+        super().__init__(quality_score)
+        self.image_sizes: list[tuple[int, int]] = []
+
+    def embed(self, image: Image.Image) -> EmbeddingResult:
+        self.image_sizes.append(image.size)
+        return self.result
 
 
 class RecordingRepository:
