@@ -116,6 +116,11 @@ class MemberStatusRequest(BaseModel):
     status: Literal["approved", "rejected"]
 
 
+class NameRequest(BaseModel):
+    user_id: str = Field(alias="userId")
+    name: str = Field(min_length=1, max_length=40)
+
+
 class ConfirmSightingRequest(BaseModel):
     analysis_id: str = Field(alias="analysisId")
     place_id: str = Field(alias="placeId")
@@ -468,6 +473,64 @@ def create_app(
             target_type="animal",
             target_id=animal_id,
         )
+        return {"ok": True}
+
+    @app.post(
+        "/places/{place_id}/animals/{animal_id}/names",
+        dependencies=[Depends(require_internal_token)],
+    )
+    def suggest_name(
+        place_id: str,
+        animal_id: str,
+        payload: dict[str, Any] = Body(...),
+    ) -> dict[str, object]:
+        try:
+            request = NameRequest.model_validate(payload)
+        except ValidationError as exc:
+            raise RequestValidationError(exc.errors()) from exc
+        authorize_place(place_id, request.user_id, require_write=True)
+        get_repository().suggest_name(
+            place_id, animal_id, request.user_id, request.name.strip()
+        )
+        return {"ok": True}
+
+    @app.get(
+        "/places/{place_id}/animals/{animal_id}/names",
+        dependencies=[Depends(require_internal_token)],
+    )
+    def list_names(
+        place_id: str,
+        animal_id: str,
+        user_id: Optional[str] = None,
+    ) -> dict[str, object]:
+        authorize_place(place_id, user_id, require_write=False)
+        repository = get_repository()
+        membership = repository.get_membership(place_id, user_id) if user_id else None
+        can_promote = bool(
+            membership
+            and membership.get("role") == "admin"
+            and membership.get("status") == "approved"
+        )
+        return {
+            "suggestions": repository.list_name_suggestions(place_id, animal_id),
+            "canPromote": can_promote,
+        }
+
+    @app.post(
+        "/places/{place_id}/animals/{animal_id}/names/promote",
+        dependencies=[Depends(require_internal_token)],
+    )
+    def promote_name(
+        place_id: str,
+        animal_id: str,
+        payload: dict[str, Any] = Body(...),
+    ) -> dict[str, object]:
+        try:
+            request = NameRequest.model_validate(payload)
+        except ValidationError as exc:
+            raise RequestValidationError(exc.errors()) from exc
+        authorize_admin(place_id, request.user_id)
+        get_repository().promote_name(place_id, animal_id, request.name.strip())
         return {"ok": True}
 
     @app.get(

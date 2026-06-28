@@ -97,6 +97,7 @@ export function PawDexApp({ placeId }: PawDexAppProps) {
         <AnimalTimeline
           animal={store.selectedAnimal}
           sightings={store.selectedAnimalSightings}
+          placeId={store.place.id}
         />
       </div>
     </main>

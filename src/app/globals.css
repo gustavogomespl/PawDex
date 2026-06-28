@@ -773,6 +773,79 @@ select:focus-visible,
   gap: 6px;
 }
 
+/* ---------- Votacao de nome ---------- */
+.name-voting {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--cream-edge);
+  display: grid;
+  gap: 8px;
+}
+
+.name-voting h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--pitch);
+}
+
+.name-voting__leader {
+  margin: 0;
+  color: #38473d;
+  font-size: 0.9rem;
+}
+
+.name-voting__form {
+  display: flex;
+  gap: 8px;
+}
+
+.name-voting__form input {
+  flex: 1;
+  min-height: 40px;
+  padding: 0 10px;
+  border-radius: 10px;
+  border: 1px solid var(--cream-edge);
+  background: #fff;
+  color: var(--ink);
+}
+
+.name-voting__form .primary-action {
+  min-height: 40px;
+  padding: 0 14px;
+}
+
+.name-voting__list {
+  display: grid;
+  gap: 6px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.name-voting__list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.88rem;
+  color: var(--ink);
+}
+
+.name-voting__count {
+  margin-left: auto;
+  color: var(--ink-soft);
+  font-weight: 700;
+}
+
+.name-voting__list button {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--gold-deep);
+  background: #fff;
+  color: var(--gold-deep);
+  font-weight: 800;
+  font-size: 0.78rem;
+}
+
 /* ---------- Composer ---------- */
 .composer {
   margin-top: 18px;

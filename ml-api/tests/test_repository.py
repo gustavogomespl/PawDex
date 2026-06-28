@@ -464,6 +464,33 @@ def test_confirm_existing_animal_persists_crop_key_not_full_photo():
     assert update.params is not None and update.params[1] == "crops/x.jpg"
 
 
+def test_confirm_existing_animal_records_match_suggestion():
+    connection = RecordingConnection(
+        pending_analysis=pending_analysis_row(species="cat"),
+        place=place_row(),
+        animals=[animal_row(id="animal-mingau")],
+        sightings=[sighting_row(animal_id="animal-mingau")],
+    )
+    repository = PostgresPawDexRepository(RecordingPool(connection))
+
+    repository.confirm_existing_animal(
+        analysis_id="analysis-1",
+        place_id="place-office",
+        animal_id="animal-mingau",
+        photo_url="https://example.com/p.jpg",
+        zone_label="Recepcao",
+        match_confidence=0.86,
+    )
+
+    insert = only_query_containing(connection, "insert into match_suggestions")
+    assert insert.params is not None
+    assert insert.params[0] == "place-office"
+    assert insert.params[2] == "animal-mingau"
+    assert insert.params[3] == "cat"
+    assert insert.params[4] == 0.86
+    assert "'confirmed'" in insert.sql.lower()
+
+
 def test_confirm_existing_animal_updates_last_seen_and_primary_photo_url():
     connection = RecordingConnection(
         pending_analysis=pending_analysis_row(species="cat"),

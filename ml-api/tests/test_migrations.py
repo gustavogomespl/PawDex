@@ -93,3 +93,10 @@ def test_crop_key_migration_chains_and_adds_column():
     assert 'revision = "0006_pending_crop_key"' in sql
     assert 'down_revision = "0005_audit_log"' in sql
     assert "crop_key" in sql.lower()
+
+
+def test_name_suggestions_migration_chains_and_creates_table():
+    sql = _read_migration("0007_name_suggestions.py")
+    assert 'revision = "0007_name_suggestions"' in sql
+    assert 'down_revision = "0006_pending_crop_key"' in sql
+    assert "create table if not exists name_suggestions" in sql.lower()

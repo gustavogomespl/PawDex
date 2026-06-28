@@ -52,6 +52,12 @@ class FakeRepository:
         self.delete_animal_calls = []
         self.delete_animal_keys: list[str] = []
         self.audit_calls = []
+        self.name_suggestion_calls = []
+        self.promote_name_calls = []
+        self.name_suggestions = [
+            {"name": "Mingau", "votes": 3},
+            {"name": "Tigrinho", "votes": 1},
+        ]
 
     def healthcheck(self) -> None:
         self.healthcheck_calls += 1
@@ -92,6 +98,15 @@ class FakeRepository:
     def delete_animal(self, place_id: str, animal_id: str):
         self.delete_animal_calls.append((place_id, animal_id))
         return list(self.delete_animal_keys)
+
+    def suggest_name(self, place_id, animal_id, user_id, name):
+        self.name_suggestion_calls.append((place_id, animal_id, user_id, name))
+
+    def list_name_suggestions(self, place_id, animal_id):
+        return self.name_suggestions
+
+    def promote_name(self, place_id, animal_id, name):
+        self.promote_name_calls.append((place_id, animal_id, name))
 
     def upsert_user(self, email: str, name: Optional[str] = None) -> dict[str, object]:
         self.upsert_calls.append({"email": email, "name": name})
@@ -971,6 +986,86 @@ def test_admin_delete_animal_forbidden_for_non_admin():
         == 403
     )
     assert repository.delete_animal_calls == []
+
+
+def test_suggest_name_records_vote_for_member():
+    repository = FakeRepository()
+    client = TestClient(_app_with(repository))
+
+    response = client.post(
+        "/places/place-1/animals/animal-1/names",
+        json={"userId": "user-1", "name": "  Mingau  "},
+    )
+
+    assert response.status_code == 200
+    assert repository.name_suggestion_calls == [
+        ("place-1", "animal-1", "user-1", "Mingau")
+    ]
+
+
+def test_suggest_name_forbidden_for_non_member():
+    repository = FakeRepository()
+    repository.place_privacy = "invite-only"
+    repository.membership = None
+    client = TestClient(_app_with(repository))
+
+    response = client.post(
+        "/places/place-1/animals/animal-1/names",
+        json={"userId": "intruder", "name": "Hack"},
+    )
+
+    assert response.status_code == 403
+    assert repository.name_suggestion_calls == []
+
+
+def test_list_names_returns_ranked_votes_and_promote_flag_for_admin():
+    repository = FakeRepository()
+    client = TestClient(_app_with(repository))
+
+    response = client.get("/places/place-1/animals/animal-1/names?user_id=admin")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["suggestions"][0] == {"name": "Mingau", "votes": 3}
+    assert body["canPromote"] is True
+
+
+def test_list_names_promote_flag_false_for_member():
+    repository = FakeRepository()
+    repository.membership = {"role": "member", "status": "approved"}
+    client = TestClient(_app_with(repository))
+
+    response = client.get("/places/place-1/animals/animal-1/names?user_id=member")
+
+    assert response.status_code == 200
+    assert response.json()["canPromote"] is False
+
+
+def test_promote_name_sets_official_name_as_admin():
+    repository = FakeRepository()
+    client = TestClient(_app_with(repository))
+
+    response = client.post(
+        "/places/place-1/animals/animal-1/names/promote",
+        json={"userId": "admin", "name": "Mingau"},
+    )
+
+    assert response.status_code == 200
+    assert repository.promote_name_calls == [("place-1", "animal-1", "Mingau")]
+
+
+def test_promote_name_forbidden_for_non_admin():
+    repository = FakeRepository()
+    repository.membership = {"role": "member", "status": "approved"}
+    client = TestClient(_app_with(repository))
+
+    response = client.post(
+        "/places/place-1/animals/animal-1/names/promote",
+        json={"userId": "member", "name": "Mingau"},
+    )
+
+    assert response.status_code == 403
+    assert repository.promote_name_calls == []
 
 
 def test_analyze_sighting_is_rate_limited(monkeypatch):

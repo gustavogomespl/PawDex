@@ -3,10 +3,12 @@ import { formatSightingDateTime } from "@/domain/pawdex/date-format";
 import { mediaSrc } from "@/domain/media";
 import { computeRarity } from "@/domain/pawdex/rarity";
 import type { Animal, Sighting } from "@/domain/pawdex/types";
+import { NameVoting } from "./NameVoting";
 
 type AnimalTimelineProps = {
   animal: Animal | null;
   sightings: Sighting[];
+  placeId?: string;
 };
 
 const SPECIES_LABEL: Record<string, string> = {
@@ -29,7 +31,11 @@ function formatAnimalStatus(status: Animal["status"]): string {
   }
 }
 
-export function AnimalTimeline({ animal, sightings }: AnimalTimelineProps) {
+export function AnimalTimeline({
+  animal,
+  sightings,
+  placeId,
+}: AnimalTimelineProps) {
   if (!animal) {
     return (
       <aside className="detail-panel detail-panel--empty">
@@ -75,6 +81,9 @@ export function AnimalTimeline({ animal, sightings }: AnimalTimelineProps) {
             <span key={tag}>{tag}</span>
           ))}
         </div>
+        {placeId ? (
+          <NameVoting key={animal.id} placeId={placeId} animalId={animal.id} />
+        ) : null}
       </article>
 
       <div className="timeline">

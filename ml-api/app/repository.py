@@ -113,6 +113,22 @@ class PawDexRepository(Protocol):
 
     def delete_animal(self, place_id: str, animal_id: str) -> list[str]: ...
 
+    def suggest_name(
+        self,
+        place_id: str,
+        animal_id: str,
+        user_id: str,
+        name: str,
+    ) -> None: ...
+
+    def list_name_suggestions(
+        self,
+        place_id: str,
+        animal_id: str,
+    ) -> list[dict[str, Any]]: ...
+
+    def promote_name(self, place_id: str, animal_id: str, name: str) -> None: ...
+
     def delete_content_by_user(self, user_id: str) -> dict[str, Any]: ...
 
     def record_audit(
@@ -405,6 +421,53 @@ class PostgresPawDexRepository:
             )
         return keys
 
+    def suggest_name(
+        self,
+        place_id: str,
+        animal_id: str,
+        user_id: str,
+        name: str,
+    ) -> None:
+        with self.pool.connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO name_suggestions (place_id, animal_id, user_id, name)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (place_id, animal_id, user_id)
+                DO UPDATE SET name = EXCLUDED.name, created_at = now()
+                """,
+                (place_id, animal_id, user_id, name),
+            )
+
+    def list_name_suggestions(
+        self,
+        place_id: str,
+        animal_id: str,
+    ) -> list[dict[str, Any]]:
+        with self.pool.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT name, count(*) AS votes
+                FROM name_suggestions
+                WHERE place_id = %s AND animal_id = %s
+                GROUP BY name
+                ORDER BY votes DESC, name ASC
+                """,
+                (place_id, animal_id),
+            ).fetchall()
+        return [{"name": row["name"], "votes": int(row["votes"])} for row in rows]
+
+    def promote_name(self, place_id: str, animal_id: str, name: str) -> None:
+        with self.pool.connection() as connection:
+            connection.execute(
+                """
+                UPDATE animals
+                SET display_name = %s
+                WHERE id = %s AND place_id = %s
+                """,
+                (name, animal_id, place_id),
+            )
+
     def delete_content_by_user(self, user_id: str) -> dict[str, Any]:
         with self.pool.connection() as connection:
             # Collect photo references first so the caller can purge the stored
@@ -632,6 +695,19 @@ class PostgresPawDexRepository:
                 """,
                 (now, photo, animal_id, place_id, species),
             )
+            if match_confidence is not None:
+                # Record the confirmed AI suggestion (community-confirmation
+                # history; feeds future scoring + the review loop).
+                connection.execute(
+                    """
+                    INSERT INTO match_suggestions (
+                      place_id, sighting_id, candidate_animal_id, species,
+                      score, status
+                    )
+                    VALUES (%s, %s, %s, %s, %s, 'confirmed')
+                    """,
+                    (place_id, sighting_id, animal_id, species, match_confidence),
+                )
             self._consume_pending_analysis(connection, analysis_id, place_id)
 
         return {
