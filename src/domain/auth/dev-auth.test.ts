@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { isDevEmailAuthEnabled, normalizeEmail, syncUser } from "./dev-auth";
+import {
+  isDevEmailAuthEnabled,
+  normalizeDisplayName,
+  normalizeEmail,
+  syncUser,
+} from "./dev-auth";
 
 describe("normalizeEmail", () => {
   it("trims and lowercases a valid email", () => {
@@ -11,6 +16,18 @@ describe("normalizeEmail", () => {
     expect(normalizeEmail("")).toBeNull();
     expect(normalizeEmail(null)).toBeNull();
     expect(normalizeEmail(undefined)).toBeNull();
+  });
+});
+
+describe("normalizeDisplayName", () => {
+  it("trims and collapses whitespace in a display name", () => {
+    expect(normalizeDisplayName("  Ana   Tutor  ")).toBe("Ana Tutor");
+  });
+
+  it("returns null for empty or non-string names", () => {
+    expect(normalizeDisplayName("   ")).toBeNull();
+    expect(normalizeDisplayName(null)).toBeNull();
+    expect(normalizeDisplayName(undefined)).toBeNull();
   });
 });
 

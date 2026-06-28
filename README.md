@@ -40,7 +40,8 @@ Services:
 
 The stack has development defaults, so a clean checkout can run without a
 local `.env`. Copy `.env.example` to `.env` when you want stable secrets or
-custom settings.
+custom settings. The local demo login/sign-up accepts any e-mail; album access
+codes are entered after login, inside "Meus albuns".
 
 The database initializes from `db/init`, then the ML API runs Alembic
 migrations on startup. To reset local database and object-storage data:
@@ -69,6 +70,11 @@ curl http://localhost:3000
 curl "http://localhost:3000/api/pawdex/state?placeId=place-office-centro"
 docker compose exec ml-api curl -f http://localhost:8000/health
 ```
+
+## Railway Deploy
+
+Railway uses separate services for `web`, `api`, Postgres with pgvector, and
+object storage. See [docs/deploy/railway.md](docs/deploy/railway.md).
 
 ## Scripts
 

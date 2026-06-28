@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from io import BytesIO
 from typing import Protocol
+from urllib.parse import urlparse
 
 
 class ObjectStorage(Protocol):
@@ -17,6 +18,16 @@ def is_storage_key(reference: str | None) -> bool:
     if not reference:
         return False
     return not reference.startswith(("http://", "https://", "data:", "/"))
+
+
+def normalize_s3_endpoint(endpoint: str, secure: bool) -> tuple[str, bool]:
+    if "://" not in endpoint:
+        return endpoint, secure
+
+    parsed = urlparse(endpoint)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return endpoint, secure
+    return parsed.netloc, parsed.scheme == "https"
 
 
 class InMemoryObjectStorage:
@@ -50,6 +61,7 @@ class MinioObjectStorage:
     ) -> None:
         from minio import Minio
 
+        endpoint, secure = normalize_s3_endpoint(endpoint, secure)
         self.bucket = bucket
         self.client = Minio(
             endpoint,

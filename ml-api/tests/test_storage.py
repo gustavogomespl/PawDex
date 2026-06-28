@@ -1,6 +1,6 @@
 import pytest
 
-from app.storage import InMemoryObjectStorage, is_storage_key
+from app.storage import InMemoryObjectStorage, is_storage_key, normalize_s3_endpoint
 
 
 def test_put_then_get_roundtrips_data_and_content_type():
@@ -36,3 +36,17 @@ def test_is_storage_key_distinguishes_keys_from_urls():
     assert is_storage_key("/local.png") is False
     assert is_storage_key(None) is False
     assert is_storage_key("") is False
+
+
+def test_normalize_s3_endpoint_accepts_railway_https_endpoint():
+    endpoint, secure = normalize_s3_endpoint("https://storage.railway.app", False)
+
+    assert endpoint == "storage.railway.app"
+    assert secure is True
+
+
+def test_normalize_s3_endpoint_preserves_local_minio_endpoint():
+    endpoint, secure = normalize_s3_endpoint("minio:9000", False)
+
+    assert endpoint == "minio:9000"
+    assert secure is False

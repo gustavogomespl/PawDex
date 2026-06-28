@@ -2,6 +2,7 @@ import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import {
   isDevEmailAuthEnabled,
+  normalizeDisplayName,
   normalizeEmail,
   syncUser,
 } from "@/domain/auth/dev-auth";
@@ -10,18 +11,22 @@ const devEmailProvider = Credentials({
   id: "dev-email",
   name: "Dev (e-mail)",
   credentials: {
+    name: { label: "Nome", type: "text" },
     email: { label: "E-mail", type: "email" },
   },
   async authorize(credentials) {
     const email = normalizeEmail(
       typeof credentials?.email === "string" ? credentials.email : null,
     );
+    const name = normalizeDisplayName(
+      typeof credentials?.name === "string" ? credentials.name : null,
+    );
 
     if (!email) {
       return null;
     }
 
-    const user = await syncUser(email, null);
+    const user = await syncUser(email, name);
     return {
       id: user.id,
       email: user.email,

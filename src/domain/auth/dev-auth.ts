@@ -39,6 +39,15 @@ export function normalizeEmail(raw: string | null | undefined): string | null {
   return EMAIL_PATTERN.test(email) ? email : null;
 }
 
+export function normalizeDisplayName(raw: string | null | undefined): string | null {
+  if (typeof raw !== "string") {
+    return null;
+  }
+
+  const name = raw.trim().replace(/\s+/g, " ");
+  return name.length > 0 ? name : null;
+}
+
 export async function syncUser(
   email: string,
   name: string | null,

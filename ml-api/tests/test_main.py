@@ -5,7 +5,7 @@ from typing import Optional
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from app.detection import BoundingBox, DetectionResponse, PetDetection
+from app.detection import DetectionResponse
 from app.main import create_app, is_place_access_allowed, is_within_geofence
 
 
@@ -273,66 +273,6 @@ def test_health_checks_database_and_returns_model_metadata():
     assert repository.healthcheck_calls == 1
 
 
-def test_detect_returns_pet_detections():
-    detector = FakeDetector(
-        DetectionResponse(
-            detections=[
-                PetDetection(
-                    species="cat",
-                    label="cat",
-                    confidence=0.87,
-                    box=BoundingBox(1, 2, 10, 11),
-                )
-            ],
-            best_detection=PetDetection(
-                species="cat",
-                label="cat",
-                confidence=0.87,
-                box=BoundingBox(1, 2, 10, 11),
-            ),
-        )
-    )
-    app = create_app(lambda: detector)
-    client = TestClient(app)
-
-    response = client.post(
-        "/detect",
-        files={"file": ("pet.png", make_png_bytes(), "image/png")},
-    )
-
-    assert response.status_code == 200
-    assert detector.calls == 1
-    assert response.json() == {
-        "detections": [
-            {
-                "species": "cat",
-                "label": "cat",
-                "confidence": 0.87,
-                "box": {"x1": 1, "y1": 2, "x2": 10, "y2": 11},
-            }
-        ],
-        "bestDetection": {
-            "species": "cat",
-            "label": "cat",
-            "confidence": 0.87,
-            "box": {"x1": 1, "y1": 2, "x2": 10, "y2": 11},
-        },
-    }
-
-
-def test_detect_rejects_invalid_image():
-    app = create_app(lambda: FakeDetector(DetectionResponse([], None)))
-    client = TestClient(app)
-
-    response = client.post(
-        "/detect",
-        files={"file": ("not-image.txt", b"nope", "text/plain")},
-    )
-
-    assert response.status_code == 400
-    assert response.json()["detail"] == "Unsupported or invalid image file."
-
-
 def test_place_state_returns_repository_state():
     repository = FakeRepository()
     app = create_app(
@@ -545,38 +485,6 @@ def test_confirm_sighting_repository_value_error_returns_bad_request():
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Analysis is stale."
-
-
-def test_detect_does_not_construct_matching_dependencies():
-    counters = {"repository": 0, "embedder": 0, "analyze_service": 0}
-
-    def repository_factory():
-        counters["repository"] += 1
-        return FakeRepository()
-
-    def embedder_factory():
-        counters["embedder"] += 1
-        raise AssertionError("embedder should not be constructed")
-
-    def analyze_service_factory(_app):
-        counters["analyze_service"] += 1
-        raise AssertionError("analyze service should not be constructed")
-
-    app = create_app(
-        detector_factory=lambda: FakeDetector(DetectionResponse([], None)),
-        repository_factory=repository_factory,
-        embedder_factory=embedder_factory,
-        analyze_service_factory=analyze_service_factory,
-    )
-    client = TestClient(app)
-
-    response = client.post(
-        "/detect",
-        files={"file": ("pet.png", make_png_bytes(), "image/png")},
-    )
-
-    assert response.status_code == 200
-    assert counters == {"repository": 0, "embedder": 0, "analyze_service": 0}
 
 
 def test_users_sync_upserts_and_returns_user():
@@ -1293,7 +1201,6 @@ def test_blocking_endpoints_run_in_threadpool_not_event_loop():
 
     for path in (
         "/health",
-        "/detect",
         "/places/{place_id}/state",
         "/analyze-sighting",
         "/confirm-sighting",
@@ -1340,21 +1247,6 @@ def test_cors_rejects_unconfigured_origin(monkeypatch):
     )
 
     assert "access-control-allow-origin" not in response.headers
-
-
-def test_detect_rejects_oversized_upload(monkeypatch):
-    monkeypatch.setattr("app.main.MAX_UPLOAD_BYTES", 4)
-    detector = FakeDetector(DetectionResponse([], None))
-    app = create_app(lambda: detector)
-    client = TestClient(app)
-
-    response = client.post(
-        "/detect",
-        files={"file": ("pet.png", make_png_bytes(), "image/png")},
-    )
-
-    assert response.status_code == 413
-    assert detector.calls == 0
 
 
 def test_analyze_sighting_rejects_oversized_upload(monkeypatch):
