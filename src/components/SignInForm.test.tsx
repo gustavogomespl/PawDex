@@ -9,7 +9,7 @@ vi.mock("next-auth/react", () => ({
 }));
 
 describe("SignInForm", () => {
-  it("submits only e-mail to enter an existing account", async () => {
+  it("submits e-mail and password to enter an existing account", async () => {
     const user = userEvent.setup();
     vi.mocked(signIn).mockResolvedValue({
       error: undefined,
@@ -22,16 +22,19 @@ describe("SignInForm", () => {
     render(<SignInForm />);
 
     await user.type(screen.getByLabelText("E-mail"), "tutor@example.com");
+    await user.type(screen.getByLabelText("Senha"), "senha-segura");
     await user.click(screen.getByRole("button", { name: "Entrar" }));
 
     expect(signIn).toHaveBeenCalledWith("dev-email", {
       email: "tutor@example.com",
+      password: "senha-segura",
+      mode: "signin",
       redirectTo: "/",
     });
     expect(screen.queryByLabelText("Codigo de acesso")).not.toBeInTheDocument();
   });
 
-  it("submits name and e-mail when creating an account", async () => {
+  it("submits name, e-mail and password when creating an account", async () => {
     const user = userEvent.setup();
     vi.mocked(signIn).mockResolvedValue({
       error: undefined,
@@ -46,11 +49,14 @@ describe("SignInForm", () => {
     await user.click(screen.getByRole("button", { name: "Cadastrar" }));
     await user.type(screen.getByLabelText("Nome"), "Ana Tutor");
     await user.type(screen.getByLabelText("E-mail"), "ana@example.com");
+    await user.type(screen.getByLabelText("Senha"), "senha-segura");
     await user.click(screen.getByRole("button", { name: "Criar conta" }));
 
     expect(signIn).toHaveBeenCalledWith("dev-email", {
       email: "ana@example.com",
       name: "Ana Tutor",
+      password: "senha-segura",
+      mode: "signup",
       redirectTo: "/",
     });
   });

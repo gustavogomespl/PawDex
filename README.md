@@ -40,8 +40,8 @@ Services:
 
 The stack has development defaults, so a clean checkout can run without a
 local `.env`. Copy `.env.example` to `.env` when you want stable secrets or
-custom settings. The local demo login/sign-up accepts any e-mail; album access
-codes are entered after login, inside "Meus albuns".
+custom settings. The local demo login/sign-up uses e-mail and password; album
+access codes are entered after login, inside "Meus albuns".
 
 The database initializes from `db/init`, then the ML API runs Alembic
 migrations on startup. To reset local database and object-storage data:

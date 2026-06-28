@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { getAlbumSlots, getLatestSightings } from "@/domain/pawdex/album";
 import { demoState } from "@/domain/pawdex/seed";
+import { AnimalStickerCard } from "./AnimalStickerCard";
 import { AnimalTimeline } from "./AnimalTimeline";
 import { LocalStats } from "./LocalStats";
 import { PlaceHeader } from "./PlaceHeader";
@@ -40,6 +41,25 @@ describe("album presentation components", () => {
 
     expect(screen.getByText("Mingau")).toBeInTheDocument();
     expect(screen.getAllByText("???")).toHaveLength(5);
+  });
+
+  it("renders rare stickers with a chrome foil layer", () => {
+    const slot = getAlbumSlots(demoState, place.id).find(
+      (albumSlot) => albumSlot.animal?.id === "animal-mingau",
+    );
+
+    render(
+      <AnimalStickerCard
+        slot={{ ...slot!, appearances: 3 }}
+        isSelected={false}
+        onSelectAnimal={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /mingau/i })).toHaveClass(
+      "sticker-card--raro",
+    );
+    expect(document.querySelector(".sticker-card__foil")).toBeInTheDocument();
   });
 
   it("renders selected animal timeline in reverse chronological order", () => {

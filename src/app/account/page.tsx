@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { RemoveContentButton } from "@/components/RemoveContentButton";
+import { SignOutButton } from "@/components/SignOutButton";
 
 export default async function AccountPage() {
   const session = await auth();
@@ -11,8 +12,13 @@ export default async function AccountPage() {
 
   return (
     <main className="app-shell">
-      <h1>Minha conta</h1>
-      <p>{session.user.email}</p>
+      <header className="account-header">
+        <div>
+          <h1>Minha conta</h1>
+          <p>{session.user.email}</p>
+        </div>
+        <SignOutButton />
+      </header>
       <p>
         <Link href="/places">Meus lugares</Link> ·{" "}
         <Link href="/terms">Termos e Privacidade</Link>

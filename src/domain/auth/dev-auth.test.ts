@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  authenticateUser,
   isDevEmailAuthEnabled,
   normalizeDisplayName,
   normalizeEmail,
+  registerUser,
   syncUser,
 } from "./dev-auth";
 
@@ -87,5 +89,70 @@ describe("syncUser", () => {
     await expect(
       syncUser("a@b.com", null, fetchMock, "http://ml-api:8000"),
     ).rejects.toThrow();
+  });
+});
+
+describe("password auth", () => {
+  it("registers a user with a password through the ml-api", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: "user-1",
+          email: "a@b.com",
+          name: "Ana",
+          avatarUrl: null,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    const user = await registerUser(
+      "a@b.com",
+      "Ana",
+      "senha-segura",
+      fetchMock,
+      "http://ml-api:8000",
+    );
+
+    expect(user.name).toBe("Ana");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://ml-api:8000/users/register",
+      expect.objectContaining({ method: "POST" }),
+    );
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+    expect(body).toEqual({
+      email: "a@b.com",
+      name: "Ana",
+      password: "senha-segura",
+    });
+  });
+
+  it("authenticates a user with e-mail and password through the ml-api", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: "user-1",
+          email: "a@b.com",
+          name: "Ana",
+          avatarUrl: null,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    const user = await authenticateUser(
+      "a@b.com",
+      "senha-segura",
+      fetchMock,
+      "http://ml-api:8000",
+    );
+
+    expect(user.id).toBe("user-1");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://ml-api:8000/users/login",
+      expect.objectContaining({ method: "POST" }),
+    );
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+    expect(body).toEqual({ email: "a@b.com", password: "senha-segura" });
   });
 });

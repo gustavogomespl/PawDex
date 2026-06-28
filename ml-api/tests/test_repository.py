@@ -81,6 +81,8 @@ class RecordingConnection:
 
         if normalized.startswith("select 1"):
             return FakeCursor(row={"?column?": 1})
+        if "from users" in normalized and "password_hash" in normalized:
+            return FakeCursor(row=self.user_row)
         if "insert into pending_sighting_analyses" in normalized:
             return FakeCursor(row={"id": self.pending_insert_id})
         if normalized.startswith("select * from pending_sighting_analyses"):
@@ -283,6 +285,56 @@ def test_upsert_user_inserts_or_updates_by_email_and_maps_result():
         "email": "tutor@example.com",
         "name": "Tutor",
         "avatarUrl": None,
+    }
+
+
+def test_set_user_password_stores_hash_by_email_and_maps_result():
+    connection = RecordingConnection(
+        user_row={
+            "id": "11111111-1111-1111-1111-111111111111",
+            "email": "tutor@example.com",
+            "name": "Tutor",
+            "avatar_url": None,
+        }
+    )
+    repository = PostgresPawDexRepository(RecordingPool(connection))
+
+    user = repository.set_user_password(
+        email="tutor@example.com",
+        name="Tutor",
+        password_hash="hash-value",
+    )
+
+    insert = only_query_containing(connection, "password_hash")
+    assert "insert into users" in insert.sql.lower()
+    assert "on conflict (email)" in insert.sql.lower()
+    assert insert.params == ("tutor@example.com", "Tutor", "hash-value")
+    assert user["email"] == "tutor@example.com"
+
+
+def test_get_user_with_password_returns_password_hash_for_auth_only():
+    connection = RecordingConnection(
+        user_row={
+            "id": "11111111-1111-1111-1111-111111111111",
+            "email": "tutor@example.com",
+            "name": "Tutor",
+            "avatar_url": None,
+            "password_hash": "hash-value",
+        }
+    )
+    repository = PostgresPawDexRepository(RecordingPool(connection))
+
+    user = repository.get_user_with_password("tutor@example.com")
+
+    select = only_query_containing(connection, "password_hash")
+    assert "from users" in select.sql.lower()
+    assert select.params == ("tutor@example.com",)
+    assert user == {
+        "id": "11111111-1111-1111-1111-111111111111",
+        "email": "tutor@example.com",
+        "name": "Tutor",
+        "avatarUrl": None,
+        "passwordHash": "hash-value",
     }
 
 
