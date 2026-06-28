@@ -137,9 +137,11 @@ Corrigir os defeitos confirmados de maior raio de impacto:
 
 > ✅ **D-onda-3 (blur + purge) — 2026-06-27.** `app/privacy.py`: `blur_regions` (PIL puro, testável) + `detect_sensitive_regions` (OpenCV Haar p/ rostos e placas, defensivo) + `blur_sensitive_regions`; no analyze o crop armazenado é **borrado** (rostos/placas) — embedding continua no crop original; `ObjectStorage.delete` + `is_storage_key`; o "remover meu conteúdo" agora **faz purge dos crops** no object storage (coleta as chaves antes de apagar as linhas). Verificado: pytest 118, vitest 71, tsc; OpenCV 4.11 + cascades carregam (blur funcional, não no-op).
 
-Itens restantes da Fase D (menores):
-- **Direitos do titular (resto):** delete por admin, export do lugar (CSV/JSON), captura de consentimento + base legal. *(erasure + purge + audit_log + Termos já feitos.)*
-- **Headers/runtime:** CSP (img-src) — adiado por causa do Next + previews `data:`; rate limiting na frente da inferência. *(non-root e demais headers já presentes desde a Fase B.)*
+> ✅ **D-onda-4 (admin/abuso) — 2026-06-27.** **Rate limiting** in-memory (`app/ratelimit.py`, sliding-window por usuário) na inferência (`/analyze-sighting` → 429), configurável via `PAWDEX_RATE_LIMIT_PER_MIN`; **export do lugar** (admin) `GET /places/{id}/export` + rota `/api/places/[id]/export` (download JSON) + link na página admin; **delete por admin** `repository.delete_animal` (cascata + coleta crop keys) + `DELETE /places/{id}/animals/{animalId}` (admin, purge no storage, audit) + rota Next + `AnimalAdminList` na página admin. Verificado: pytest 126, vitest 71, tsc, next build.
+
+Itens restantes da Fase D (os 2 menores, adiados):
+- **Captura de consentimento + base legal** (tabela + registro no signin) — acoplado ao auth; baixo valor relativo. *(Termos/Privacidade já existem.)*
+- **CSP** (img-src) — adiado: Next + Turbopack precisam de nonce p/ scripts inline; um CSP fraco com `unsafe-inline` não compensa o risco de quebra sem teste runtime. *(non-root e demais headers de segurança já presentes desde a Fase B.)*
 
 ### Fase E — Fechar o loop social
 - **Persistir sugestões + decisões** em `match_suggestions` (hoje morta) e usar `review_status='needs-review'`; adicionar opção **"não sei"** (hoje só existente/novo).

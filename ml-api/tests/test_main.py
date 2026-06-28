@@ -49,6 +49,8 @@ class FakeRepository:
         self.member_status_calls = []
         self.delete_content_calls = []
         self.delete_photo_keys: list[str] = []
+        self.delete_animal_calls = []
+        self.delete_animal_keys: list[str] = []
         self.audit_calls = []
 
     def healthcheck(self) -> None:
@@ -86,6 +88,10 @@ class FakeRepository:
 
     def record_audit(self, user_id, action, target_type=None, target_id=None, metadata=None):
         self.audit_calls.append((user_id, action, metadata))
+
+    def delete_animal(self, place_id: str, animal_id: str):
+        self.delete_animal_calls.append((place_id, animal_id))
+        return list(self.delete_animal_keys)
 
     def upsert_user(self, email: str, name: Optional[str] = None) -> dict[str, object]:
         self.upsert_calls.append({"email": email, "name": name})
@@ -910,6 +916,86 @@ def test_media_endpoint_404_for_missing_object():
     client = TestClient(app)
 
     assert client.get("/media/crops/missing.jpg").status_code == 404
+
+
+def test_export_place_returns_state_for_admin():
+    repository = FakeRepository()
+    client = TestClient(_app_with(repository))
+
+    response = client.get("/places/place-1/export?user_id=admin")
+
+    assert response.status_code == 200
+    assert "animals" in response.json()
+
+
+def test_export_place_forbidden_for_non_admin():
+    repository = FakeRepository()
+    repository.membership = {"role": "member", "status": "approved"}
+    client = TestClient(_app_with(repository))
+
+    assert client.get("/places/place-1/export?user_id=member").status_code == 403
+
+
+def test_admin_delete_animal_purges_crops_and_audits():
+    from app.storage import InMemoryObjectStorage
+
+    storage = InMemoryObjectStorage()
+    storage.put("crops/gone.jpg", b"x", "image/jpeg")
+    repository = FakeRepository()
+    repository.delete_animal_keys = ["crops/gone.jpg", "https://seed/a.jpg"]
+    app = create_app(
+        detector_factory=lambda: FakeDetector(DetectionResponse([], None)),
+        repository_factory=lambda: repository,
+        storage_factory=lambda: storage,
+    )
+    client = TestClient(app)
+
+    response = client.delete("/places/place-1/animals/animal-9?user_id=admin")
+
+    assert response.status_code == 200
+    assert repository.delete_animal_calls == [("place-1", "animal-9")]
+    import pytest
+
+    with pytest.raises(KeyError):
+        storage.get("crops/gone.jpg")
+    assert repository.audit_calls[-1][1] == "admin_delete_animal"
+
+
+def test_admin_delete_animal_forbidden_for_non_admin():
+    repository = FakeRepository()
+    repository.membership = None
+    client = TestClient(_app_with(repository))
+
+    assert (
+        client.delete("/places/place-1/animals/animal-9?user_id=intruder").status_code
+        == 403
+    )
+    assert repository.delete_animal_calls == []
+
+
+def test_analyze_sighting_is_rate_limited(monkeypatch):
+    monkeypatch.setenv("PAWDEX_RATE_LIMIT_PER_MIN", "1")
+    service = FakeAnalyzeService()
+    app = create_app(
+        detector_factory=lambda: FakeDetector(DetectionResponse([], None)),
+        repository_factory=lambda: FakeRepository(),
+        analyze_service_factory=lambda _app: service,
+    )
+    client = TestClient(app)
+
+    first = client.post(
+        "/analyze-sighting",
+        data={"place_id": "place-1", "user_id": "user-1"},
+        files={"file": ("pet.png", make_png_bytes(), "image/png")},
+    )
+    second = client.post(
+        "/analyze-sighting",
+        data={"place_id": "place-1", "user_id": "user-1"},
+        files={"file": ("pet.png", make_png_bytes(), "image/png")},
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 429
 
 
 def test_blocking_endpoints_run_in_threadpool_not_event_loop():

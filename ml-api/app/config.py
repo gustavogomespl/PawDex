@@ -19,6 +19,7 @@ class Settings:
     s3_secret_key: str
     s3_bucket: str
     s3_secure: bool
+    rate_limit_per_min: int
 
 
 def parse_origins(raw: str) -> tuple[str, ...]:
@@ -41,4 +42,5 @@ def load_settings() -> Settings:
         s3_secret_key=os.getenv("PAWDEX_S3_SECRET_KEY", "pawdex-minio-secret"),
         s3_bucket=os.getenv("PAWDEX_S3_BUCKET", "pawdex"),
         s3_secure=os.getenv("PAWDEX_S3_SECURE", "false").lower() == "true",
+        rate_limit_per_min=int(os.getenv("PAWDEX_RATE_LIMIT_PER_MIN", "60")),
     )

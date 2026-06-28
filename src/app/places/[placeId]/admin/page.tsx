@@ -5,6 +5,7 @@ import { internalApiHeaders } from "@/domain/auth/internal";
 import { fetchPlacesForUser } from "@/domain/places/server";
 import { InviteCard } from "@/components/InviteCard";
 import { MembersManager, type Member } from "@/components/MembersManager";
+import { AnimalAdminList, type AdminAnimal } from "@/components/AnimalAdminList";
 
 const DEFAULT_ML_API_URL = "http://127.0.0.1:8000";
 
@@ -35,14 +36,26 @@ export default async function PlaceAdminPage({
     ? ((await response.json()).members as Member[])
     : [];
 
+  const stateResponse = await fetch(
+    `${mlApiUrl}/places/${encodeURIComponent(placeId)}/state?user_id=${encodeURIComponent(session.user.id)}`,
+    { cache: "no-store", headers: internalApiHeaders() },
+  );
+  const animals: AdminAnimal[] = stateResponse.ok
+    ? ((await stateResponse.json()).animals as AdminAnimal[])
+    : [];
+
   return (
     <main className="app-shell">
       <header className="places-header">
         <h1>Admin · {place.name}</h1>
-        <Link href={`/places/${placeId}`}>Voltar ao album</Link>
+        <span>
+          <Link href={`/places/${placeId}`}>Voltar ao album</Link>{" "}
+          <a href={`/api/places/${placeId}/export`}>Exportar dados (JSON)</a>
+        </span>
       </header>
       {place.inviteCode ? <InviteCard inviteCode={place.inviteCode} /> : null}
       <MembersManager placeId={placeId} members={members} />
+      <AnimalAdminList placeId={placeId} animals={animals} />
     </main>
   );
 }

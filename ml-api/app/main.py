@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from app.config import load_settings
 from app.detection import Detector, load_image
+from app.ratelimit import RateLimiter
 from app.storage import is_storage_key
 
 if TYPE_CHECKING:
@@ -216,6 +217,9 @@ def create_app(
     app.state.analyze_service = None
     app.state.storage = None
     app.state.repository_pool = None
+    app.state.rate_limiter = RateLimiter(
+        load_settings().rate_limit_per_min, per_seconds=60
+    )
 
     def get_detector() -> Detector:
         if app.state.detector is None:
@@ -428,6 +432,45 @@ def create_app(
         return {"ok": True}
 
     @app.get(
+        "/places/{place_id}/export",
+        dependencies=[Depends(require_internal_token)],
+    )
+    def export_place(place_id: str, user_id: str) -> dict[str, object]:
+        authorize_admin(place_id, user_id)
+        return get_repository().get_place_state(place_id)
+
+    @app.delete(
+        "/places/{place_id}/animals/{animal_id}",
+        dependencies=[Depends(require_internal_token)],
+    )
+    def admin_delete_animal(
+        place_id: str,
+        animal_id: str,
+        user_id: str,
+    ) -> dict[str, object]:
+        repository = get_repository()
+        authorize_admin(place_id, user_id)
+        keys = [
+            key
+            for key in repository.delete_animal(place_id, animal_id)
+            if is_storage_key(key)
+        ]
+        if keys:
+            storage = get_storage()
+            for key in keys:
+                try:
+                    storage.delete(key)
+                except Exception:
+                    pass
+        repository.record_audit(
+            user_id,
+            "admin_delete_animal",
+            target_type="animal",
+            target_id=animal_id,
+        )
+        return {"ok": True}
+
+    @app.get(
         "/places/{place_id}/state",
         dependencies=[Depends(require_internal_token)],
     )
@@ -445,6 +488,10 @@ def create_app(
         file: UploadFile = File(...),
     ) -> dict[str, object]:
         authorize_place(place_id, user_id, require_write=True)
+        if not app.state.rate_limiter.allow(user_id):
+            raise HTTPException(
+                status_code=429, detail="Too many requests. Try again shortly."
+            )
         image_bytes = read_upload_within_limit(file)
         try:
             image = load_image(image_bytes)

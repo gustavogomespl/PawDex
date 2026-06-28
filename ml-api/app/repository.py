@@ -111,6 +111,8 @@ class PawDexRepository(Protocol):
         status: str,
     ) -> None: ...
 
+    def delete_animal(self, place_id: str, animal_id: str) -> list[str]: ...
+
     def delete_content_by_user(self, user_id: str) -> dict[str, Any]: ...
 
     def record_audit(
@@ -382,6 +384,26 @@ class PostgresPawDexRepository:
                 """,
                 (status, place_id, user_id),
             )
+
+    def delete_animal(self, place_id: str, animal_id: str) -> list[str]:
+        with self.pool.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT primary_photo_url AS photo FROM animals
+                WHERE id = %s AND place_id = %s
+                UNION ALL
+                SELECT photo_url AS photo FROM sightings
+                WHERE animal_id = %s AND place_id = %s
+                """,
+                (animal_id, place_id, animal_id, place_id),
+            ).fetchall()
+            keys = [row["photo"] for row in rows if row["photo"]]
+            # Cascades sightings + embeddings for this animal.
+            connection.execute(
+                "DELETE FROM animals WHERE id = %s AND place_id = %s",
+                (animal_id, place_id),
+            )
+        return keys
 
     def delete_content_by_user(self, user_id: str) -> dict[str, Any]:
         with self.pool.connection() as connection:
