@@ -1,11 +1,8 @@
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import {
-  authenticateUser,
+  authorizePasswordCredentials,
   isDevEmailAuthEnabled,
-  normalizeDisplayName,
-  normalizeEmail,
-  registerUser,
 } from "@/domain/auth/dev-auth";
 
 const devEmailProvider = Credentials({
@@ -18,27 +15,7 @@ const devEmailProvider = Credentials({
     password: { label: "Senha", type: "password" },
   },
   async authorize(credentials) {
-    const email = normalizeEmail(
-      typeof credentials?.email === "string" ? credentials.email : null,
-    );
-    const password =
-      typeof credentials?.password === "string" ? credentials.password : null;
-    const mode = credentials?.mode === "signup" ? "signup" : "signin";
-    const name = normalizeDisplayName(
-      typeof credentials?.name === "string" ? credentials.name : null,
-    );
-
-    if (!email || !password || password.length < 8) {
-      return null;
-    }
-
-    let user = null;
-    if (mode === "signup") {
-      user = name ? await registerUser(email, name, password) : null;
-    } else {
-      user = await authenticateUser(email, password);
-    }
-
+    const user = await authorizePasswordCredentials(credentials);
     if (!user) {
       return null;
     }

@@ -1598,6 +1598,18 @@ select:focus-visible,
   line-height: 1.4;
 }
 
+.signin-form__error {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 139, 139, 0.42);
+  background: rgba(95, 20, 27, 0.32);
+  color: #ffd8d8;
+  font-size: 0.86rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
 .member-actions {
   display: inline-flex;
   gap: 8px;

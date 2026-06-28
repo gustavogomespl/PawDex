@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  authorizePasswordCredentials,
   authenticateUser,
   isDevEmailAuthEnabled,
   normalizeDisplayName,
   normalizeEmail,
   registerUser,
+  resolveAuthMode,
   syncUser,
 } from "./dev-auth";
 
@@ -55,6 +57,20 @@ describe("isDevEmailAuthEnabled", () => {
         PAWDEX_ENABLE_DEV_AUTH: "false",
       }),
     ).toBe(false);
+  });
+});
+
+describe("resolveAuthMode", () => {
+  it("uses explicit signup mode", () => {
+    expect(resolveAuthMode("signup", null)).toBe("signup");
+  });
+
+  it("treats a display name as signup intent when mode is missing", () => {
+    expect(resolveAuthMode(undefined, "Ana Tutor")).toBe("signup");
+  });
+
+  it("defaults to signin without signup mode or name", () => {
+    expect(resolveAuthMode(undefined, null)).toBe("signin");
   });
 });
 
@@ -154,5 +170,47 @@ describe("password auth", () => {
     );
     const body = JSON.parse(String(fetchMock.mock.calls[0][1].body));
     expect(body).toEqual({ email: "a@b.com", password: "senha-segura" });
+  });
+
+  it("registers when the submitted credentials have a name even without mode", async () => {
+    const register = vi.fn().mockResolvedValue({
+      id: "user-1",
+      email: "ana@example.com",
+      name: "Ana Tutor",
+      avatarUrl: null,
+    });
+    const authenticate = vi.fn();
+
+    const user = await authorizePasswordCredentials(
+      {
+        email: "Ana@Example.com",
+        name: " Ana   Tutor ",
+        password: "senha-segura",
+      },
+      { registerUser: register, authenticateUser: authenticate },
+    );
+
+    expect(user?.id).toBe("user-1");
+    expect(register).toHaveBeenCalledWith(
+      "ana@example.com",
+      "Ana Tutor",
+      "senha-segura",
+    );
+    expect(authenticate).not.toHaveBeenCalled();
+  });
+
+  it("returns null instead of throwing when the backend rejects credentials", async () => {
+    const authenticate = vi.fn().mockRejectedValue(new Error("401"));
+
+    await expect(
+      authorizePasswordCredentials(
+        {
+          email: "ana@example.com",
+          password: "senha-segura",
+          mode: "signin",
+        },
+        { authenticateUser: authenticate },
+      ),
+    ).resolves.toBeNull();
   });
 });

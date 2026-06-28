@@ -1,16 +1,22 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { signIn } from "next-auth/react";
 import { LockKeyhole, Mail, UserRound } from "lucide-react";
 
 type AuthMode = "signin" | "signup";
 
+const AUTH_ERROR_MESSAGE =
+  "Nao foi possivel entrar. Confira os dados e tente novamente.";
+
 export function SignInForm() {
+  const router = useRouter();
   const [mode, setMode] = useState<AuthMode>("signin");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -19,13 +25,35 @@ export function SignInForm() {
       return;
     }
     setIsSubmitting(true);
-    await signIn("dev-email", {
-      email,
-      password,
-      mode,
-      ...(mode === "signup" ? { name } : {}),
-      redirectTo: "/",
-    });
+    setFormError(null);
+
+    try {
+      const result = await signIn("dev-email", {
+        email,
+        password,
+        mode,
+        ...(mode === "signup" ? { name } : {}),
+        redirect: false,
+        redirectTo: "/",
+      });
+
+      if (result?.ok) {
+        router.push(result.url ?? "/");
+        router.refresh();
+        return;
+      }
+
+      setFormError(AUTH_ERROR_MESSAGE);
+    } catch {
+      setFormError(AUTH_ERROR_MESSAGE);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  function selectMode(nextMode: AuthMode) {
+    setMode(nextMode);
+    setFormError(null);
   }
 
   return (
@@ -35,7 +63,7 @@ export function SignInForm() {
           type="button"
           className={mode === "signin" ? "is-active" : ""}
           aria-pressed={mode === "signin"}
-          onClick={() => setMode("signin")}
+          onClick={() => selectMode("signin")}
         >
           Ja tenho cadastro
         </button>
@@ -43,7 +71,7 @@ export function SignInForm() {
           type="button"
           className={mode === "signup" ? "is-active" : ""}
           aria-pressed={mode === "signup"}
-          onClick={() => setMode("signup")}
+          onClick={() => selectMode("signup")}
         >
           Cadastrar
         </button>
@@ -103,6 +131,11 @@ export function SignInForm() {
           ? "Depois de criar sua conta, use o codigo do album na area logada."
           : "Depois de entrar, voce pode abrir novos albuns pelo codigo do lugar."}
       </p>
+      {formError ? (
+        <p className="signin-form__error" role="alert">
+          {formError}
+        </p>
+      ) : null}
       <button className="primary-action" type="submit" disabled={isSubmitting}>
         {isSubmitting
           ? mode === "signup"

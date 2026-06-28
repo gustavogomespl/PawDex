@@ -7,6 +7,8 @@ export type SyncedUser = {
   avatarUrl: string | null;
 };
 
+export type AuthMode = "signin" | "signup";
+
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const DEFAULT_ML_API_URL = "http://127.0.0.1:8000";
@@ -46,6 +48,17 @@ export function normalizeDisplayName(raw: string | null | undefined): string | n
 
   const name = raw.trim().replace(/\s+/g, " ");
   return name.length > 0 ? name : null;
+}
+
+export function resolveAuthMode(
+  rawMode: unknown,
+  normalizedDisplayName: string | null,
+): AuthMode {
+  if (rawMode === "signup" || normalizedDisplayName) {
+    return "signup";
+  }
+
+  return "signin";
 }
 
 async function postUserAuth(
@@ -108,4 +121,56 @@ export async function authenticateUser(
   mlApiUrl: string = process.env.ML_API_URL ?? DEFAULT_ML_API_URL,
 ): Promise<SyncedUser> {
   return postUserAuth("/users/login", { email, password }, fetchImpl, mlApiUrl);
+}
+
+type PasswordCredentials = {
+  email?: unknown;
+  mode?: unknown;
+  name?: unknown;
+  password?: unknown;
+};
+
+type PasswordAuthDependencies = {
+  registerUser?: (
+    email: string,
+    name: string,
+    password: string,
+  ) => Promise<SyncedUser>;
+  authenticateUser?: (email: string, password: string) => Promise<SyncedUser>;
+};
+
+export async function authorizePasswordCredentials(
+  credentials: PasswordCredentials | null | undefined,
+  dependencies: PasswordAuthDependencies = {},
+): Promise<SyncedUser | null> {
+  const email = normalizeEmail(
+    typeof credentials?.email === "string" ? credentials.email : null,
+  );
+  const password =
+    typeof credentials?.password === "string" ? credentials.password : null;
+  const name = normalizeDisplayName(
+    typeof credentials?.name === "string" ? credentials.name : null,
+  );
+  const mode = resolveAuthMode(credentials?.mode, name);
+
+  if (!email || !password || password.length < 8) {
+    return null;
+  }
+
+  try {
+    if (mode === "signup") {
+      if (!name) {
+        return null;
+      }
+      return await (dependencies.registerUser ?? registerUser)(
+        email,
+        name,
+        password,
+      );
+    }
+
+    return await (dependencies.authenticateUser ?? authenticateUser)(email, password);
+  } catch {
+    return null;
+  }
 }

@@ -1,14 +1,27 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { signIn } from "next-auth/react";
 import { SignInForm } from "./SignInForm";
+
+const router = vi.hoisted(() => ({
+  push: vi.fn(),
+  refresh: vi.fn(),
+}));
 
 vi.mock("next-auth/react", () => ({
   signIn: vi.fn(),
 }));
 
+vi.mock("next/navigation", () => ({
+  useRouter: () => router,
+}));
+
 describe("SignInForm", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("submits e-mail and password to enter an existing account", async () => {
     const user = userEvent.setup();
     vi.mocked(signIn).mockResolvedValue({
@@ -29,8 +42,11 @@ describe("SignInForm", () => {
       email: "tutor@example.com",
       password: "senha-segura",
       mode: "signin",
+      redirect: false,
       redirectTo: "/",
     });
+    expect(router.push).toHaveBeenCalledWith("/");
+    expect(router.refresh).toHaveBeenCalled();
     expect(screen.queryByLabelText("Codigo de acesso")).not.toBeInTheDocument();
   });
 
@@ -57,7 +73,33 @@ describe("SignInForm", () => {
       name: "Ana Tutor",
       password: "senha-segura",
       mode: "signup",
+      redirect: false,
       redirectTo: "/",
     });
+    expect(router.push).toHaveBeenCalledWith("/");
+    expect(router.refresh).toHaveBeenCalled();
+  });
+
+  it("keeps the form usable and shows an inline error when credentials fail", async () => {
+    const user = userEvent.setup();
+    vi.mocked(signIn).mockResolvedValue({
+      error: "CredentialsSignin",
+      code: "credentials",
+      status: 401,
+      ok: false,
+      url: null,
+    });
+
+    render(<SignInForm />);
+
+    await user.type(screen.getByLabelText("E-mail"), "ana@example.com");
+    await user.type(screen.getByLabelText("Senha"), "senha-errada");
+    await user.click(screen.getByRole("button", { name: "Entrar" }));
+
+    expect(
+      await screen.findByText("Nao foi possivel entrar. Confira os dados e tente novamente."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Entrar" })).toBeEnabled();
+    expect(router.push).not.toHaveBeenCalled();
   });
 });
