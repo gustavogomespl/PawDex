@@ -2,6 +2,11 @@
  * @vitest-environment node
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("@/auth", () => ({
+  auth: vi.fn(async () => ({ user: { id: "user-1" } })),
+}));
+
 import { POST } from "./route";
 
 const successBody = {

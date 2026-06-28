@@ -1,3 +1,5 @@
+import { internalApiHeaders } from "@/domain/auth/internal";
+
 const DEFAULT_ML_API_URL = "http://127.0.0.1:8000";
 
 export type PlaceSummary = {
@@ -18,7 +20,7 @@ export async function fetchPlacesForUser(
   try {
     const response = await fetch(
       `${mlApiUrl}/users/${encodeURIComponent(userId)}/places`,
-      { cache: "no-store" },
+      { cache: "no-store", headers: internalApiHeaders() },
     );
 
     if (!response.ok) {

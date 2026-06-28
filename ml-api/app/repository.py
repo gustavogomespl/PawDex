@@ -53,6 +53,7 @@ class PawDexRepository(Protocol):
         photo_url: str,
         zone_label: str = "Area comum",
         match_confidence: float | None = None,
+        created_by: str | None = None,
     ) -> dict[str, Any]: ...
 
     def confirm_new_animal(
@@ -63,6 +64,7 @@ class PawDexRepository(Protocol):
         species: str,
         photo_url: str,
         zone_label: str = "Area comum",
+        created_by: str | None = None,
     ) -> dict[str, Any]: ...
 
     def upsert_user(
@@ -84,6 +86,14 @@ class PawDexRepository(Protocol):
     ) -> dict[str, Any]: ...
 
     def list_places_for_user(self, user_id: str) -> list[dict[str, Any]]: ...
+
+    def get_place_privacy(self, place_id: str) -> str | None: ...
+
+    def get_membership(
+        self,
+        place_id: str,
+        user_id: str,
+    ) -> dict[str, Any] | None: ...
 
 
 def similarity_from_distance(distance: float) -> float:
@@ -234,6 +244,31 @@ class PostgresPawDexRepository:
             rows = connection.execute(sql, (user_id,)).fetchall()
         return [{**row_to_place(row), "role": row["role"]} for row in rows]
 
+    def get_place_privacy(self, place_id: str) -> str | None:
+        with self.pool.connection() as connection:
+            row = connection.execute(
+                "SELECT privacy_level FROM places WHERE id = %s",
+                (place_id,),
+            ).fetchone()
+        return row["privacy_level"] if row else None
+
+    def get_membership(
+        self,
+        place_id: str,
+        user_id: str,
+    ) -> dict[str, Any] | None:
+        with self.pool.connection() as connection:
+            row = connection.execute(
+                """
+                SELECT role, status
+                FROM place_members
+                WHERE place_id = %s
+                  AND user_id = %s
+                """,
+                (place_id, user_id),
+            ).fetchone()
+        return dict(row) if row else None
+
     def get_place_state(self, place_id: str) -> dict[str, Any]:
         with self.pool.connection() as connection:
             place = connection.execute(
@@ -362,6 +397,7 @@ class PostgresPawDexRepository:
         photo_url: str,
         zone_label: str = "Area comum",
         match_confidence: float | None = None,
+        created_by: str | None = None,
     ) -> dict[str, Any]:
         with self.pool.connection() as connection:
             pending = self._fetch_pending_analysis(connection, analysis_id, place_id)
@@ -381,6 +417,7 @@ class PostgresPawDexRepository:
                 taken_at=now,
                 detector_confidence=pending["detector_confidence"],
                 match_confidence=match_confidence,
+                created_by=created_by,
             )
             self._insert_animal_embedding(
                 connection=connection,
@@ -415,6 +452,7 @@ class PostgresPawDexRepository:
         species: str,
         photo_url: str,
         zone_label: str = "Area comum",
+        created_by: str | None = None,
     ) -> dict[str, Any]:
         with self.pool.connection() as connection:
             pending = self._fetch_pending_analysis(connection, analysis_id, place_id)
@@ -430,9 +468,9 @@ class PostgresPawDexRepository:
                 INSERT INTO animals (
                   id, place_id, species, display_name, status, description,
                   color_tags, rarity_label, primary_photo_url, first_seen_at,
-                  last_seen_at
+                  last_seen_at, created_by
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     animal_id,
@@ -446,6 +484,7 @@ class PostgresPawDexRepository:
                     photo_url,
                     now,
                     now,
+                    created_by,
                 ),
             )
             self._insert_sighting(
@@ -459,6 +498,7 @@ class PostgresPawDexRepository:
                 taken_at=now,
                 detector_confidence=pending["detector_confidence"],
                 match_confidence=None,
+                created_by=created_by,
             )
             self._insert_animal_embedding(
                 connection=connection,
@@ -540,14 +580,15 @@ class PostgresPawDexRepository:
         taken_at: datetime,
         detector_confidence: float,
         match_confidence: float | None,
+        created_by: str | None = None,
     ) -> None:
         connection.execute(
             """
             INSERT INTO sightings (
               id, place_id, animal_id, photo_url, species, zone_label, taken_at,
-              detector_confidence, match_confidence, review_status
+              detector_confidence, match_confidence, review_status, created_by
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 sighting_id,
@@ -560,6 +601,7 @@ class PostgresPawDexRepository:
                 detector_confidence,
                 match_confidence,
                 "confirmed",
+                created_by,
             ),
         )
 

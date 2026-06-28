@@ -32,6 +32,7 @@ services:
       PAWDEX_YOLO_MODEL: ${PAWDEX_YOLO_MODEL:-yolo11n.pt}
       PAWDEX_YOLO_CONFIDENCE: ${PAWDEX_YOLO_CONFIDENCE:-0.35}
       PAWDEX_ALLOWED_ORIGINS: ${PAWDEX_ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      PAWDEX_INTERNAL_TOKEN: ${PAWDEX_INTERNAL_TOKEN:-pawdex-dev-internal-token}
     # Reachable only via the Next.js proxy on the internal network, never the host.
     expose:
       - "8000"
@@ -56,6 +57,7 @@ services:
       ML_API_URL: http://ml-api:8000
       NODE_ENV: production
       AUTH_SECRET: ${AUTH_SECRET:-pawdex-dev-auth-secret-change-me}
+      PAWDEX_INTERNAL_TOKEN: ${PAWDEX_INTERNAL_TOKEN:-pawdex-dev-internal-token}
     ports:
       - "3000:3000"
     depends_on:

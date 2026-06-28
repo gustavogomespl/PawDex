@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
+import { internalApiHeaders } from "@/domain/auth/internal";
 
 const DEFAULT_ML_API_URL = "http://127.0.0.1:8000";
 
@@ -16,7 +17,7 @@ export async function GET() {
   try {
     const response = await fetch(
       `${mlApiUrl}/users/${encodeURIComponent(session.user.id)}/places`,
-      { cache: "no-store" },
+      { cache: "no-store", headers: internalApiHeaders() },
     );
 
     if (!response.ok) {
@@ -51,7 +52,7 @@ export async function POST(request: Request) {
   try {
     const response = await fetch(`${mlApiUrl}/places`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: internalApiHeaders({ "content-type": "application/json" }),
       body: JSON.stringify({ ...body, createdBy: session.user.id }),
     });
 

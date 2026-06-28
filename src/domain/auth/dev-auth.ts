@@ -1,3 +1,5 @@
+import { internalApiHeaders } from "@/domain/auth/internal";
+
 export type SyncedUser = {
   id: string;
   email: string;
@@ -26,7 +28,7 @@ export async function syncUser(
 ): Promise<SyncedUser> {
   const response = await fetchImpl(`${mlApiUrl}/users/sync`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: internalApiHeaders({ "content-type": "application/json" }),
     body: JSON.stringify({ email, name }),
   });
 

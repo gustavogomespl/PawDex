@@ -2,6 +2,11 @@
  * @vitest-environment node
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("@/auth", () => ({
+  auth: vi.fn(async () => ({ user: { id: "user-1" } })),
+}));
+
 import { GET } from "./route";
 
 const emptyState = {
@@ -49,7 +54,8 @@ describe("GET /api/pawdex/state", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual(successBody);
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://ml-api:8000/places/park%201/state",
+      "http://ml-api:8000/places/park%201/state?user_id=user-1",
+      { headers: {} },
     );
   });
 

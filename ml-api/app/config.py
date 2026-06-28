@@ -13,6 +13,7 @@ class Settings:
     yolo_model: str
     yolo_confidence: float
     allowed_origins: tuple[str, ...]
+    internal_token: str
 
 
 def parse_origins(raw: str) -> tuple[str, ...]:
@@ -29,4 +30,5 @@ def load_settings() -> Settings:
         allowed_origins=parse_origins(
             os.getenv("PAWDEX_ALLOWED_ORIGINS", DEFAULT_ALLOWED_ORIGINS)
         ),
+        internal_token=os.getenv("PAWDEX_INTERNAL_TOKEN", ""),
     )

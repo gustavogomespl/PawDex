@@ -3,7 +3,16 @@ from contextlib import asynccontextmanager
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, Literal, Optional
 
-from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import (
+    Body,
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    UploadFile,
+)
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, ValidationError
@@ -18,6 +27,30 @@ if TYPE_CHECKING:
 
 # Reject uploads larger than this before reading them into the detection pipeline.
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024
+
+
+def is_place_access_allowed(
+    privacy_level: str,
+    membership_status: Optional[str],
+    *,
+    require_write: bool,
+) -> bool:
+    """Read access: public places, or approved members. Write: approved members."""
+    is_approved_member = membership_status == "approved"
+    if require_write:
+        return is_approved_member
+    return privacy_level == "public" or is_approved_member
+
+
+def require_internal_token(
+    x_internal_token: Optional[str] = Header(default=None, alias="X-Internal-Token"),
+) -> None:
+    """Defense in depth: when PAWDEX_INTERNAL_TOKEN is set, only callers presenting
+    it (the Next.js server) may reach place-scoped endpoints. Unset (tests/local) =
+    skipped."""
+    expected = load_settings().internal_token
+    if expected and x_internal_token != expected:
+        raise HTTPException(status_code=401, detail="Invalid internal token.")
 
 
 def read_upload_within_limit(file: UploadFile) -> bytes:
@@ -49,6 +82,7 @@ class CreatePlaceRequest(BaseModel):
 class ConfirmSightingRequest(BaseModel):
     analysis_id: str = Field(alias="analysisId")
     place_id: str = Field(alias="placeId")
+    user_id: str = Field(alias="userId")
     decision: Literal["existing", "new"]
     animal_id: Optional[str] = Field(default=None, alias="animalId")
     match_confidence: Optional[float] = Field(
@@ -151,6 +185,29 @@ def create_app(
             app.state.analyze_service = app.state.analyze_service_factory(app)
         return app.state.analyze_service
 
+    def authorize_place(
+        place_id: str,
+        user_id: Optional[str],
+        *,
+        require_write: bool,
+    ) -> None:
+        repository = get_repository()
+        privacy = repository.get_place_privacy(place_id)
+        if privacy is None:
+            raise HTTPException(status_code=404, detail="Place not found.")
+
+        membership_status: Optional[str] = None
+        if user_id:
+            membership = repository.get_membership(place_id, user_id)
+            membership_status = membership.get("status") if membership else None
+
+        if not is_place_access_allowed(
+            privacy, membership_status, require_write=require_write
+        ):
+            raise HTTPException(
+                status_code=403, detail="Not authorized for this place."
+            )
+
     @app.get("/health")
     def health() -> dict[str, str]:
         response = {"status": "ok", "model": "configured"}
@@ -174,11 +231,11 @@ def create_app(
             else None,
         }
 
-    @app.post("/users/sync")
+    @app.post("/users/sync", dependencies=[Depends(require_internal_token)])
     def sync_user(payload: SyncUserRequest) -> dict[str, object]:
         return get_repository().upsert_user(email=payload.email, name=payload.name)
 
-    @app.post("/places")
+    @app.post("/places", dependencies=[Depends(require_internal_token)])
     def create_place(payload: dict[str, Any] = Body(...)) -> dict[str, object]:
         # Validated manually (like confirm-sighting) so FastAPI does not introspect
         # an aliased body model directly, which emits spurious alias warnings.
@@ -197,19 +254,31 @@ def create_app(
             geofence=request.geofence,
         )
 
-    @app.get("/users/{user_id}/places")
+    @app.get(
+        "/users/{user_id}/places",
+        dependencies=[Depends(require_internal_token)],
+    )
     def list_user_places(user_id: str) -> dict[str, object]:
         return {"places": get_repository().list_places_for_user(user_id)}
 
-    @app.get("/places/{place_id}/state")
-    def place_state(place_id: str) -> dict[str, object]:
+    @app.get(
+        "/places/{place_id}/state",
+        dependencies=[Depends(require_internal_token)],
+    )
+    def place_state(
+        place_id: str,
+        user_id: Optional[str] = None,
+    ) -> dict[str, object]:
+        authorize_place(place_id, user_id, require_write=False)
         return get_repository().get_place_state(place_id)
 
-    @app.post("/analyze-sighting")
+    @app.post("/analyze-sighting", dependencies=[Depends(require_internal_token)])
     def analyze_sighting(
         place_id: str = Form(...),
+        user_id: str = Form(...),
         file: UploadFile = File(...),
     ) -> dict[str, object]:
+        authorize_place(place_id, user_id, require_write=True)
         image_bytes = read_upload_within_limit(file)
         try:
             image = load_image(image_bytes)
@@ -218,7 +287,7 @@ def create_app(
 
         return get_analyze_service().analyze(image, place_id)
 
-    @app.post("/confirm-sighting")
+    @app.post("/confirm-sighting", dependencies=[Depends(require_internal_token)])
     def confirm_sighting(
         payload: dict[str, Any] = Body(...),
     ) -> dict[str, object]:
@@ -226,6 +295,8 @@ def create_app(
             request = ConfirmSightingRequest.model_validate(payload)
         except ValidationError as exc:
             raise RequestValidationError(exc.errors()) from exc
+
+        authorize_place(request.place_id, request.user_id, require_write=True)
 
         try:
             if request.decision == "existing":
@@ -241,6 +312,7 @@ def create_app(
                     photo_url=request.photo_url,
                     zone_label=request.zone_label,
                     match_confidence=request.match_confidence,
+                    created_by=request.user_id,
                 )
 
             if request.display_name is None or request.species is None:
@@ -255,6 +327,7 @@ def create_app(
                 species=request.species,
                 photo_url=request.photo_url,
                 zone_label=request.zone_label,
+                created_by=request.user_id,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

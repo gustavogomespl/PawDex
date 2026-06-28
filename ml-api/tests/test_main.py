@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from app.detection import BoundingBox, DetectionResponse, PetDetection
-from app.main import create_app
+from app.main import create_app, is_place_access_allowed
 
 
 class FakeDetector:
@@ -29,9 +29,19 @@ class FakeRepository:
         self.create_place_calls = []
         self.list_places_calls = []
         self.confirm_error: ValueError | None = None
+        # Authorization defaults: public place + approved member, so flows are
+        # allowed unless a test overrides them to exercise 403s.
+        self.place_privacy = "public"
+        self.membership = {"role": "admin", "status": "approved"}
 
     def healthcheck(self) -> None:
         self.healthcheck_calls += 1
+
+    def get_place_privacy(self, place_id: str):
+        return self.place_privacy
+
+    def get_membership(self, place_id: str, user_id: str):
+        return self.membership
 
     def upsert_user(self, email: str, name: Optional[str] = None) -> dict[str, object]:
         self.upsert_calls.append({"email": email, "name": name})
@@ -78,6 +88,7 @@ class FakeRepository:
         photo_url: str,
         zone_label: str = "Area comum",
         match_confidence: Optional[float] = None,
+        created_by: Optional[str] = None,
     ) -> dict[str, object]:
         if self.confirm_error is not None:
             raise self.confirm_error
@@ -88,6 +99,7 @@ class FakeRepository:
             "photo_url": photo_url,
             "zone_label": zone_label,
             "match_confidence": match_confidence,
+            "created_by": created_by,
         }
         self.confirm_existing_calls.append(call)
         return {"confirmed": True, "animalId": animal_id}
@@ -100,6 +112,7 @@ class FakeRepository:
         species: str,
         photo_url: str,
         zone_label: str = "Area comum",
+        created_by: Optional[str] = None,
     ) -> dict[str, object]:
         if self.confirm_error is not None:
             raise self.confirm_error
@@ -110,6 +123,7 @@ class FakeRepository:
             "species": species,
             "photo_url": photo_url,
             "zone_label": zone_label,
+            "created_by": created_by,
         }
         self.confirm_new_calls.append(call)
         return {"confirmed": True, "animalId": "animal-new"}
@@ -239,13 +253,14 @@ def test_analyze_sighting_forwards_image_and_place_to_service():
     service = FakeAnalyzeService()
     app = create_app(
         detector_factory=lambda: FakeDetector(DetectionResponse([], None)),
+        repository_factory=lambda: FakeRepository(),
         analyze_service_factory=lambda _app: service,
     )
     client = TestClient(app)
 
     response = client.post(
         "/analyze-sighting",
-        data={"place_id": "place-1"},
+        data={"place_id": "place-1", "user_id": "user-1"},
         files={"file": ("pet.png", make_png_bytes(), "image/png")},
     )
 
@@ -264,13 +279,14 @@ def test_analyze_sighting_rejects_invalid_image():
     service = FakeAnalyzeService()
     app = create_app(
         detector_factory=lambda: FakeDetector(DetectionResponse([], None)),
+        repository_factory=lambda: FakeRepository(),
         analyze_service_factory=lambda _app: service,
     )
     client = TestClient(app)
 
     response = client.post(
         "/analyze-sighting",
-        data={"place_id": "place-1"},
+        data={"place_id": "place-1", "user_id": "user-1"},
         files={"file": ("not-image.txt", b"nope", "text/plain")},
     )
 
@@ -292,6 +308,7 @@ def test_confirm_sighting_existing_animal_returns_repository_result():
         json={
             "analysisId": "analysis-1",
             "placeId": "place-1",
+            "userId": "user-1",
             "decision": "existing",
             "animalId": "animal-1",
             "matchConfidence": 0.86,
@@ -310,6 +327,7 @@ def test_confirm_sighting_existing_animal_returns_repository_result():
             "photo_url": "https://example.test/pet.png",
             "zone_label": "Jardim",
             "match_confidence": 0.86,
+            "created_by": "user-1",
         }
     ]
 
@@ -327,6 +345,7 @@ def test_confirm_sighting_new_animal_returns_repository_result():
         json={
             "analysisId": "analysis-1",
             "placeId": "place-1",
+            "userId": "user-1",
             "decision": "new",
             "displayName": "Mimi",
             "species": "cat",
@@ -344,21 +363,16 @@ def test_confirm_sighting_new_animal_returns_repository_result():
             "species": "cat",
             "photo_url": "https://example.test/pet.png",
             "zone_label": "Area comum",
+            "created_by": "user-1",
         }
     ]
 
 
 def test_confirm_sighting_existing_requires_animal_id():
-    repository_factory_calls = 0
-
-    def repository_factory():
-        nonlocal repository_factory_calls
-        repository_factory_calls += 1
-        return FakeRepository()
-
+    repository = FakeRepository()
     app = create_app(
         detector_factory=lambda: FakeDetector(DetectionResponse([], None)),
-        repository_factory=repository_factory,
+        repository_factory=lambda: repository,
     )
     client = TestClient(app)
 
@@ -367,6 +381,7 @@ def test_confirm_sighting_existing_requires_animal_id():
         json={
             "analysisId": "analysis-1",
             "placeId": "place-1",
+            "userId": "user-1",
             "decision": "existing",
             "photoUrl": "https://example.test/pet.png",
         },
@@ -374,20 +389,14 @@ def test_confirm_sighting_existing_requires_animal_id():
 
     assert response.status_code == 400
     assert response.json()["detail"] == "animalId is required."
-    assert repository_factory_calls == 0
+    assert repository.confirm_existing_calls == []
 
 
 def test_confirm_sighting_new_requires_display_name_and_species():
-    repository_factory_calls = 0
-
-    def repository_factory():
-        nonlocal repository_factory_calls
-        repository_factory_calls += 1
-        return FakeRepository()
-
+    repository = FakeRepository()
     app = create_app(
         detector_factory=lambda: FakeDetector(DetectionResponse([], None)),
-        repository_factory=repository_factory,
+        repository_factory=lambda: repository,
     )
     client = TestClient(app)
 
@@ -396,6 +405,7 @@ def test_confirm_sighting_new_requires_display_name_and_species():
         json={
             "analysisId": "analysis-1",
             "placeId": "place-1",
+            "userId": "user-1",
             "decision": "new",
             "displayName": "Mimi",
             "photoUrl": "https://example.test/pet.png",
@@ -404,7 +414,7 @@ def test_confirm_sighting_new_requires_display_name_and_species():
 
     assert response.status_code == 400
     assert response.json()["detail"] == "displayName and species are required."
-    assert repository_factory_calls == 0
+    assert repository.confirm_new_calls == []
 
 
 def test_confirm_sighting_repository_value_error_returns_bad_request():
@@ -421,6 +431,7 @@ def test_confirm_sighting_repository_value_error_returns_bad_request():
         json={
             "analysisId": "analysis-1",
             "placeId": "place-1",
+            "userId": "user-1",
             "decision": "existing",
             "animalId": "animal-1",
             "photoUrl": "https://example.test/pet.png",
@@ -564,6 +575,92 @@ def test_list_user_places_endpoint_returns_member_places():
     assert repository.list_places_calls == ["user-1"]
 
 
+def test_is_place_access_allowed_rules():
+    # read: public allowed for anyone; private needs approved membership
+    assert is_place_access_allowed("public", None, require_write=False) is True
+    assert is_place_access_allowed("invite-only", None, require_write=False) is False
+    assert is_place_access_allowed("invite-only", "pending", require_write=False) is False
+    assert is_place_access_allowed("invite-only", "approved", require_write=False) is True
+    # write: always needs approved membership, even for public places
+    assert is_place_access_allowed("public", None, require_write=True) is False
+    assert is_place_access_allowed("public", "approved", require_write=True) is True
+    assert is_place_access_allowed("invite-only", "pending", require_write=True) is False
+
+
+def test_place_state_forbids_non_member_of_private_place():
+    repository = FakeRepository()
+    repository.place_privacy = "invite-only"
+    repository.membership = None
+    app = create_app(
+        detector_factory=lambda: FakeDetector(DetectionResponse([], None)),
+        repository_factory=lambda: repository,
+    )
+    client = TestClient(app)
+
+    response = client.get("/places/place-1/state?user_id=intruder")
+
+    assert response.status_code == 403
+
+
+def test_place_state_returns_404_for_unknown_place():
+    repository = FakeRepository()
+    repository.place_privacy = None
+    app = create_app(
+        detector_factory=lambda: FakeDetector(DetectionResponse([], None)),
+        repository_factory=lambda: repository,
+    )
+    client = TestClient(app)
+
+    response = client.get("/places/ghost/state?user_id=user-1")
+
+    assert response.status_code == 404
+
+
+def test_confirm_sighting_forbids_non_member():
+    repository = FakeRepository()
+    repository.place_privacy = "invite-only"
+    repository.membership = None
+    app = create_app(
+        detector_factory=lambda: FakeDetector(DetectionResponse([], None)),
+        repository_factory=lambda: repository,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/confirm-sighting",
+        json={
+            "analysisId": "analysis-1",
+            "placeId": "place-1",
+            "userId": "intruder",
+            "decision": "existing",
+            "animalId": "animal-1",
+            "photoUrl": "https://example.test/pet.png",
+        },
+    )
+
+    assert response.status_code == 403
+    assert repository.confirm_existing_calls == []
+
+
+def test_internal_token_required_when_configured(monkeypatch):
+    monkeypatch.setenv("PAWDEX_INTERNAL_TOKEN", "s3cret")
+    repository = FakeRepository()
+    app = create_app(
+        detector_factory=lambda: FakeDetector(DetectionResponse([], None)),
+        repository_factory=lambda: repository,
+    )
+    client = TestClient(app)
+
+    blocked = client.get("/places/place-1/state?user_id=user-1")
+    assert blocked.status_code == 401
+
+    allowed = client.get(
+        "/places/place-1/state?user_id=user-1",
+        headers={"X-Internal-Token": "s3cret"},
+    )
+    assert allowed.status_code == 200
+
+
 def test_blocking_endpoints_run_in_threadpool_not_event_loop():
     app = create_app(
         detector_factory=lambda: FakeDetector(DetectionResponse([], None)),
@@ -647,13 +744,14 @@ def test_analyze_sighting_rejects_oversized_upload(monkeypatch):
     service = FakeAnalyzeService()
     app = create_app(
         detector_factory=lambda: FakeDetector(DetectionResponse([], None)),
+        repository_factory=lambda: FakeRepository(),
         analyze_service_factory=lambda _app: service,
     )
     client = TestClient(app)
 
     response = client.post(
         "/analyze-sighting",
-        data={"place_id": "place-1"},
+        data={"place_id": "place-1", "user_id": "user-1"},
         files={"file": ("pet.png", make_png_bytes(), "image/png")},
     )
 
