@@ -1,5 +1,6 @@
 import { Clock3, MapPin } from "lucide-react";
 import { formatSightingDateTime } from "@/domain/pawdex/date-format";
+import { mediaSrc } from "@/domain/media";
 import type { Animal, Sighting } from "@/domain/pawdex/types";
 
 type AnimalTimelineProps = {
@@ -34,7 +35,11 @@ export function AnimalTimeline({ animal, sightings }: AnimalTimelineProps) {
 
   return (
     <aside className="detail-panel">
-      <img className="detail-panel__photo" src={animal.primaryPhotoUrl} alt="" />
+      <img
+        className="detail-panel__photo"
+        src={mediaSrc(animal.primaryPhotoUrl)}
+        alt=""
+      />
       <div className="detail-panel__heading">
         <h2>{animal.displayName}</h2>
         <span>{formatAnimalStatus(animal.status)}</span>
@@ -50,7 +55,7 @@ export function AnimalTimeline({ animal, sightings }: AnimalTimelineProps) {
           .filter((sighting) => sighting.animalId === animal.id)
           .map((sighting) => (
             <article key={sighting.id} className="timeline-item">
-              <img src={sighting.photoUrl} alt="" />
+              <img src={mediaSrc(sighting.photoUrl)} alt="" />
               <div>
                 <span>
                   <MapPin aria-hidden="true" size={14} />

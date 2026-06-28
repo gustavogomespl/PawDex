@@ -133,12 +133,13 @@ Corrigir os defeitos confirmados de maior raio de impacto:
 ### Fase D — Privacidade-by-design & direitos LGPD — 🟡 **EM ANDAMENTO**
 > ✅ **D-onda-1 (direitos do titular) — 2026-06-27.** Migração `0005` (`audit_log` append-only); `repository.delete_content_by_user` (apaga animais+avistamentos do usuário via `created_by`; cascata leva embeddings/sightings) + `record_audit`; endpoint `DELETE /users/{id}/content` (registra auditoria); rota `DELETE /api/account/content` (sessão); página `/account` ("Remover meu conteúdo" com confirmação) + `/terms` (Política/Termos LGPD); `/account` protegido no middleware. Verificado: pytest 105, vitest 69, tsc, next build, **pg real** (erasure zera o conteúdo do usuário + grava no audit_log). *Como as fotos ainda são base64 na linha, apagar a linha já remove a foto — o purge no object storage entra na D-onda-2.*
 
+> ✅ **D-onda-2 (object storage + crop-only) — 2026-06-27.** Abstração `app/storage.py` (`ObjectStorage` Protocol + `InMemoryObjectStorage` p/ testes + `MinioObjectStorage` S3-compatível); MinIO como 4º serviço no compose + envs `PAWDEX_S3_*`; migração `0006` (`pending_sighting_analyses.crop_key`); no analyze, o **recorte** (`crop_to_box`) é re-encodado em JPEG (**descarta EXIF**) e enviado ao storage, gravando `crop_key` no pending; no confirm, o repositório persiste o **crop_key** como `photo_url`/`primary_photo_url` (fallback p/ a foto antiga) — **nunca mais a foto inteira em base64**; serving por rota autorizada `GET /media/{key}` (ml-api) + proxy `/api/media/[...key]` (sessão) + helper `mediaSrc` nos `<img>`. Verificado: pytest 112, vitest 71, tsc, next build, **MinIO real** (put/get + 404), e crop_key→photo no repositório. *(Bug pego na verificação e corrigido: `S3Error`→`KeyError` para 404.)*
+
 Itens restantes da Fase D (próximas ondas):
-- **Guardar só o recorte** (o ml-api já calcula `crop_to_box` e descarta) no object storage (MinIO); nunca a foto inteira; remover EXIF. *(Inclui o object storage adiado da Fase B.)*
-- **Blur de rostos/placas** server-side antes de persistir.
-- **Servir imagens por rota autorizada** (não dentro do JSON de estado).
+- **Blur de rostos/placas** server-side antes de persistir (sobre o recorte).
 - **Direitos do titular (resto):** delete admin, export do lugar, captura de consentimento + base legal. *(erasure + audit_log + Termos já feitos.)*
-- **Headers/runtime:** CSP (img-src limitado ao storage) + rate limiting na frente da inferência. *(non-root nos Dockerfiles já feito na Fase B.)*
+- **Headers/runtime:** CSP (img-src) — adiado por causa do Next + previews `data:`; rate limiting na frente da inferência. *(non-root já na Fase B; demais headers de segurança já presentes.)*
+- **Purge do crop no object storage** no "remover meu conteúdo" (hoje apaga a linha; falta apagar o objeto).
 
 ### Fase E — Fechar o loop social
 - **Persistir sugestões + decisões** em `match_suggestions` (hoje morta) e usar `review_status='needs-review'`; adicionar opção **"não sei"** (hoje só existente/novo).

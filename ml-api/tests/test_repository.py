@@ -439,6 +439,31 @@ def test_confirm_existing_animal_inserts_embedding_for_confirmed_sighting_animal
     assert result["selectedAnimalId"] == "animal-mingau"
 
 
+def test_confirm_existing_animal_persists_crop_key_not_full_photo():
+    connection = RecordingConnection(
+        pending_analysis=pending_analysis_row(species="cat", crop_key="crops/x.jpg"),
+        place=place_row(),
+        animals=[animal_row(id="animal-mingau")],
+        sightings=[sighting_row(animal_id="animal-mingau")],
+    )
+    repository = PostgresPawDexRepository(RecordingPool(connection))
+
+    repository.confirm_existing_animal(
+        analysis_id="analysis-1",
+        place_id="place-office",
+        animal_id="animal-mingau",
+        photo_url="data:image/png;base64,FULLPHOTO",
+        zone_label="Recepcao",
+    )
+
+    sighting = insert_values_by_column(
+        only_query_containing(connection, "insert into sightings")
+    )
+    assert sighting["photo_url"] == "crops/x.jpg"
+    update = only_query_containing(connection, "update animals")
+    assert update.params is not None and update.params[1] == "crops/x.jpg"
+
+
 def test_confirm_existing_animal_updates_last_seen_and_primary_photo_url():
     connection = RecordingConnection(
         pending_analysis=pending_analysis_row(species="cat"),
@@ -751,6 +776,7 @@ def pending_analysis_row(
     *,
     species: str = "cat",
     embedding: list[float] | None = None,
+    crop_key: str | None = None,
 ) -> dict[str, Any]:
     return {
         "id": "analysis-1",
@@ -761,6 +787,7 @@ def pending_analysis_row(
         "model_version": "mobilenet-v3",
         "embedding": embedding or [0.1, 0.2, 0.3],
         "quality_score": 0.82,
+        "crop_key": crop_key,
         "created_at": datetime(2026, 6, 3, 9, 0, tzinfo=timezone.utc),
     }
 

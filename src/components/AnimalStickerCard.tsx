@@ -1,4 +1,5 @@
 import { PawPrint } from "lucide-react";
+import { mediaSrc } from "@/domain/media";
 import type { AlbumSlotView } from "@/domain/pawdex/types";
 
 type AnimalStickerCardProps = {
@@ -33,7 +34,7 @@ export function AnimalStickerCard({
       onClick={() => onSelectAnimal(slot.animal!.id)}
     >
       <span className="sticker-card__number">#{slot.slotNumber}</span>
-      <img src={slot.animal.primaryPhotoUrl} alt={slot.animal.displayName} />
+      <img src={mediaSrc(slot.animal.primaryPhotoUrl)} alt={slot.animal.displayName} />
       <strong>{slot.animal.displayName}</strong>
       <span>{slot.animal.rarityLabel}</span>
     </button>

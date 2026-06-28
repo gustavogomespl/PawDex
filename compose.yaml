@@ -23,6 +23,23 @@ services:
         limits:
           memory: 512m
 
+  minio:
+    image: minio/minio
+    restart: unless-stopped
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: ${PAWDEX_S3_ACCESS_KEY:-pawdex}
+      MINIO_ROOT_PASSWORD: ${PAWDEX_S3_SECRET_KEY:-pawdex_minio_secret}
+    volumes:
+      - pawdex-minio-data:/data
+    # Internal only; crops are served through the Next.js /api/media proxy.
+    expose:
+      - "9000"
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
   ml-api:
     build:
       context: ./ml-api
@@ -33,12 +50,19 @@ services:
       PAWDEX_YOLO_CONFIDENCE: ${PAWDEX_YOLO_CONFIDENCE:-0.35}
       PAWDEX_ALLOWED_ORIGINS: ${PAWDEX_ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
       PAWDEX_INTERNAL_TOKEN: ${PAWDEX_INTERNAL_TOKEN:-pawdex-dev-internal-token}
+      PAWDEX_S3_ENDPOINT: ${PAWDEX_S3_ENDPOINT:-minio:9000}
+      PAWDEX_S3_ACCESS_KEY: ${PAWDEX_S3_ACCESS_KEY:-pawdex}
+      PAWDEX_S3_SECRET_KEY: ${PAWDEX_S3_SECRET_KEY:-pawdex_minio_secret}
+      PAWDEX_S3_BUCKET: ${PAWDEX_S3_BUCKET:-pawdex}
+      PAWDEX_S3_SECURE: ${PAWDEX_S3_SECURE:-false}
     # Reachable only via the Next.js proxy on the internal network, never the host.
     expose:
       - "8000"
     depends_on:
       db:
         condition: service_healthy
+      minio:
+        condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 10s
@@ -73,3 +97,4 @@ services:
 
 volumes:
   pawdex-db-data:
+  pawdex-minio-data:

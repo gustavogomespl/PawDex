@@ -847,6 +847,38 @@ def test_delete_user_content_removes_and_audits():
     assert repository.audit_calls[0][1] == "remove_own_content"
 
 
+def test_media_endpoint_streams_stored_object():
+    from app.storage import InMemoryObjectStorage
+
+    storage = InMemoryObjectStorage()
+    storage.put("crops/x.jpg", b"\xff\xd8jpegbytes", "image/jpeg")
+    app = create_app(
+        detector_factory=lambda: FakeDetector(DetectionResponse([], None)),
+        repository_factory=lambda: FakeRepository(),
+        storage_factory=lambda: storage,
+    )
+    client = TestClient(app)
+
+    response = client.get("/media/crops/x.jpg")
+
+    assert response.status_code == 200
+    assert response.content == b"\xff\xd8jpegbytes"
+    assert response.headers["content-type"] == "image/jpeg"
+
+
+def test_media_endpoint_404_for_missing_object():
+    from app.storage import InMemoryObjectStorage
+
+    app = create_app(
+        detector_factory=lambda: FakeDetector(DetectionResponse([], None)),
+        repository_factory=lambda: FakeRepository(),
+        storage_factory=lambda: InMemoryObjectStorage(),
+    )
+    client = TestClient(app)
+
+    assert client.get("/media/crops/missing.jpg").status_code == 404
+
+
 def test_blocking_endpoints_run_in_threadpool_not_event_loop():
     app = create_app(
         detector_factory=lambda: FakeDetector(DetectionResponse([], None)),

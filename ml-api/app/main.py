@@ -12,6 +12,7 @@ from fastapi import (
     Form,
     Header,
     HTTPException,
+    Response,
     UploadFile,
 )
 from fastapi.exceptions import RequestValidationError
@@ -25,6 +26,7 @@ if TYPE_CHECKING:
     from app.embedding import ImageEmbedder
     from app.matching import AnalyzeSightingService
     from app.repository import PawDexRepository
+    from app.storage import ObjectStorage
 
 # Reject uploads larger than this before reading them into the detection pipeline.
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024
@@ -137,6 +139,7 @@ def create_app(
     analyze_service_factory: Optional[
         Callable[[FastAPI], "AnalyzeSightingService"]
     ] = None,
+    storage_factory: Optional[Callable[[], "ObjectStorage"]] = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -179,6 +182,7 @@ def create_app(
             detector=get_detector(),
             embedder=get_embedder(),
             repository=get_repository(),
+            storage=get_storage(),
         )
 
     def default_embedder_factory() -> "ImageEmbedder":
@@ -186,16 +190,30 @@ def create_app(
 
         return TorchvisionMobileNetEmbedder()
 
+    def default_storage_factory() -> "ObjectStorage":
+        from app.storage import MinioObjectStorage
+
+        settings = load_settings()
+        return MinioObjectStorage(
+            endpoint=settings.s3_endpoint,
+            access_key=settings.s3_access_key,
+            secret_key=settings.s3_secret_key,
+            bucket=settings.s3_bucket,
+            secure=settings.s3_secure,
+        )
+
     app.state.detector_factory = detector_factory or default_detector_factory
     app.state.repository_factory = repository_factory or default_repository_factory
     app.state.embedder_factory = embedder_factory or default_embedder_factory
     app.state.analyze_service_factory = (
         analyze_service_factory or default_analyze_service_factory
     )
+    app.state.storage_factory = storage_factory or default_storage_factory
     app.state.detector = None
     app.state.repository = None
     app.state.embedder = None
     app.state.analyze_service = None
+    app.state.storage = None
     app.state.repository_pool = None
 
     def get_detector() -> Detector:
@@ -217,6 +235,11 @@ def create_app(
         if app.state.analyze_service is None:
             app.state.analyze_service = app.state.analyze_service_factory(app)
         return app.state.analyze_service
+
+    def get_storage() -> "ObjectStorage":
+        if app.state.storage is None:
+            app.state.storage = app.state.storage_factory()
+        return app.state.storage
 
     def authorize_place(
         place_id: str,
@@ -312,6 +335,14 @@ def create_app(
         result = repository.delete_content_by_user(user_id)
         repository.record_audit(user_id, "remove_own_content", metadata=result)
         return result
+
+    @app.get("/media/{key:path}", dependencies=[Depends(require_internal_token)])
+    def get_media(key: str) -> Response:
+        try:
+            data, content_type = get_storage().get(key)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Object not found.") from exc
+        return Response(content=data, media_type=content_type)
 
     @app.get("/invites/{code}", dependencies=[Depends(require_internal_token)])
     def resolve_invite(code: str) -> dict[str, object]:

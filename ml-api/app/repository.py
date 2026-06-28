@@ -43,6 +43,7 @@ class PawDexRepository(Protocol):
         model_version: str,
         embedding: Any,
         quality_score: float,
+        crop_key: str | None = None,
     ) -> str: ...
 
     def confirm_existing_animal(
@@ -513,13 +514,14 @@ class PostgresPawDexRepository:
         model_version: str,
         embedding: Any,
         quality_score: float,
+        crop_key: str | None = None,
     ) -> str:
         sql = """
             INSERT INTO pending_sighting_analyses (
               place_id, species, detector_confidence, detection_box,
-              model_version, embedding, quality_score
+              model_version, embedding, quality_score, crop_key
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
         """
         with self.pool.connection() as connection:
@@ -537,6 +539,7 @@ class PostgresPawDexRepository:
                     model_version,
                     embedding,
                     quality_score,
+                    crop_key,
                 ),
             ).fetchone()
 
@@ -559,6 +562,8 @@ class PostgresPawDexRepository:
             now = datetime.now(timezone.utc)
             sighting_id = _new_id("sighting")
             species = pending["species"]
+            # Persist the stored crop (privacy-by-design), not the full photo.
+            photo = pending.get("crop_key") or photo_url
 
             self._validate_existing_animal(connection, animal_id, place_id, species)
             self._insert_sighting(
@@ -566,7 +571,7 @@ class PostgresPawDexRepository:
                 sighting_id=sighting_id,
                 place_id=place_id,
                 animal_id=animal_id,
-                photo_url=photo_url,
+                photo_url=photo,
                 species=species,
                 zone_label=zone_label,
                 taken_at=now,
@@ -590,7 +595,7 @@ class PostgresPawDexRepository:
                   AND place_id = %s
                   AND species = %s
                 """,
-                (now, photo_url, animal_id, place_id, species),
+                (now, photo, animal_id, place_id, species),
             )
             self._consume_pending_analysis(connection, analysis_id, place_id)
 
@@ -617,6 +622,7 @@ class PostgresPawDexRepository:
             now = datetime.now(timezone.utc)
             animal_id = _new_id("animal")
             sighting_id = _new_id("sighting")
+            photo = pending.get("crop_key") or photo_url
 
             connection.execute(
                 """
@@ -636,7 +642,7 @@ class PostgresPawDexRepository:
                     "",
                     [],
                     "Ocasional",
-                    photo_url,
+                    photo,
                     now,
                     now,
                     created_by,
@@ -647,7 +653,7 @@ class PostgresPawDexRepository:
                 sighting_id=sighting_id,
                 place_id=place_id,
                 animal_id=animal_id,
-                photo_url=photo_url,
+                photo_url=photo,
                 species=species,
                 zone_label=zone_label,
                 taken_at=now,
