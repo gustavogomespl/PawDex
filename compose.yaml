@@ -82,6 +82,7 @@ services:
       NODE_ENV: production
       AUTH_SECRET: ${AUTH_SECRET:-pawdex-dev-auth-secret-change-me}
       PAWDEX_INTERNAL_TOKEN: ${PAWDEX_INTERNAL_TOKEN:-pawdex-dev-internal-token}
+      PAWDEX_ENABLE_DEV_AUTH: ${PAWDEX_ENABLE_DEV_AUTH:-true}
     ports:
       - "3000:3000"
     depends_on:

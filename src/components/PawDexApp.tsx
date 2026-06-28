@@ -30,7 +30,9 @@ export function PawDexApp({ placeId }: PawDexAppProps) {
   if (!store.place) {
     return (
       <main className="app-shell">
-        <p>Local nao encontrado.</p>
+        <p role={store.warning ? "alert" : undefined}>
+          {store.warning ?? "Local nao encontrado."}
+        </p>
       </main>
     );
   }

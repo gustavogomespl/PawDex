@@ -96,4 +96,26 @@ describe("GET /api/pawdex/state", () => {
       error: "Nao foi possivel carregar a PawDex agora.",
     });
   });
+
+  it("preserves forbidden responses instead of converting them to an offline fallback", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ detail: "Not authorized." }), {
+          status: 403,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+
+    const response = await GET(
+      new Request("http://localhost/api/pawdex/state?placeId=private-place"),
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      ...emptyState,
+      error: "Sem permissao para acessar este lugar.",
+    });
+  });
 });

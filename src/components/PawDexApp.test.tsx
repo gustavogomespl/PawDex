@@ -13,9 +13,10 @@ type FetchCall = {
   init: RequestInit | undefined;
 };
 
-function jsonResponse(body: unknown, ok = true) {
+function jsonResponse(body: unknown, ok = true, status = ok ? 200 : 500) {
   return {
     ok,
+    status,
     json: vi.fn().mockResolvedValue(body),
   };
 }
@@ -214,6 +215,43 @@ describe("PawDexApp", () => {
       ),
     ).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent(/Usando dados locais/i);
+  });
+
+  it("does not fall back to local storage when the user cannot access the place", async () => {
+    const router = createFetchRouter();
+    router.on("/api/pawdex/state", () =>
+      jsonResponse(
+        {
+          places: [],
+          animals: [],
+          sightings: [],
+          albumSlots: [],
+          error: "Sem permissao para acessar este lugar.",
+        },
+        false,
+        403,
+      ),
+    );
+    const savedState = {
+      ...demoState,
+      animals: [
+        ...demoState.animals,
+        {
+          ...demoState.animals[0],
+          id: "animal-saved-nina",
+          displayName: "Saved Nina",
+          lastSeenAt: "2026-06-27T09:00:00.000Z",
+        },
+      ],
+    };
+    window.localStorage.setItem(PAWDEX_STORAGE_KEY, JSON.stringify(savedState));
+
+    render(<PawDexApp placeId={activePlaceId} />);
+
+    expect(
+      await screen.findByText("Sem permissao para acessar este lugar."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Saved Nina")).not.toBeInTheDocument();
   });
 
   it("does not cache remote state in local storage", async () => {

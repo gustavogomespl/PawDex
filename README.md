@@ -19,9 +19,9 @@ database.
 
 ## Out Of Scope For This Slice
 
-- Real authentication.
 - Real geofence or QR check-in.
-- Supabase or cloud object storage.
+- Production OAuth/email authentication.
+- Cloud object storage.
 - Model fine-tuning for pet re-identification.
 - Native mobile app.
 
@@ -34,10 +34,16 @@ docker compose up --build
 Services:
 
 - Web app: http://localhost:3000
-- ML API: http://localhost:8000
-- Postgres + pgvector: localhost:5432
+- ML API: internal Compose network only, proxied by Next.js.
+- Postgres + pgvector: internal Compose network only.
+- MinIO object storage: internal Compose network only.
 
-The database initializes from `db/init`. To reset local database data:
+The stack has development defaults, so a clean checkout can run without a
+local `.env`. Copy `.env.example` to `.env` when you want stable secrets or
+custom settings.
+
+The database initializes from `db/init`, then the ML API runs Alembic
+migrations on startup. To reset local database and object-storage data:
 
 ```bash
 docker compose down -v
@@ -48,7 +54,9 @@ Pet matching uses YOLO to detect and crop cats/dogs, MobileNetV3 Small to
 generate a 576-dimensional vector, and pgvector cosine distance to search
 embeddings inside the current place.
 
-The first YOLO request may download the configured model. Override it with:
+The Docker image pre-bakes the configured YOLO and MobileNet weights so runtime
+requests do not need model downloads. Override the YOLO model at build time
+with:
 
 ```bash
 PAWDEX_YOLO_MODEL=yolov8n.pt docker compose up --build
@@ -57,8 +65,9 @@ PAWDEX_YOLO_MODEL=yolov8n.pt docker compose up --build
 Useful checks:
 
 ```bash
-curl http://localhost:8000/health
+curl http://localhost:3000
 curl "http://localhost:3000/api/pawdex/state?placeId=place-office-centro"
+docker compose exec ml-api curl -f http://localhost:8000/health
 ```
 
 ## Scripts

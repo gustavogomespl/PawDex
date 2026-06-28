@@ -4,6 +4,7 @@ from dataclasses import asdict
 from typing import Any
 
 import numpy as np
+import pytest
 from PIL import Image
 
 from app.detection import BoundingBox, DetectionResponse, PetDetection
@@ -178,6 +179,7 @@ def test_pending_call_includes_detection_and_embedding_metadata():
             "embedding": embedder.result.vector,
             "quality_score": 0.8,
             "crop_key": None,
+            "created_by": None,
         }
     ]
 
@@ -202,6 +204,32 @@ def test_analyze_uploads_crop_jpeg_and_records_crop_key():
     data, content_type = storage.get(crop_key)
     assert content_type == "image/jpeg"
     assert data[:2] == b"\xff\xd8"  # JPEG magic bytes
+
+
+def test_analyze_records_creator_and_purges_stale_pending_crops():
+    from app.storage import InMemoryObjectStorage
+
+    storage = InMemoryObjectStorage()
+    storage.put("crops/stale.jpg", b"old", "image/jpeg")
+    repository = RecordingRepository(matches=[], stale_crop_keys=["crops/stale.jpg"])
+    service = AnalyzeSightingService(
+        detector=FakeDetector(best_detection=pet_detection()),
+        embedder=FakeEmbedder(quality_score=0.9),
+        repository=repository,
+        storage=storage,
+    )
+
+    result = service.analyze(
+        Image.new("RGB", (100, 100), "white"),
+        "place-1",
+        created_by="user-1",
+    )
+
+    assert result["analysisId"] == "analysis-created"
+    assert repository.purge_calls == 1
+    assert repository.pending_calls[0]["created_by"] == "user-1"
+    with pytest.raises(KeyError):
+        storage.get("crops/stale.jpg")
 
 
 def pet_detection(
@@ -268,10 +296,16 @@ class SizeRecordingEmbedder(FakeEmbedder):
 
 
 class RecordingRepository:
-    def __init__(self, matches: list[MatchCandidate] | None = None):
+    def __init__(
+        self,
+        matches: list[MatchCandidate] | None = None,
+        stale_crop_keys: list[str] | None = None,
+    ):
         self.matches = matches or []
+        self.stale_crop_keys = stale_crop_keys or []
         self.find_match_calls: list[dict[str, Any]] = []
         self.pending_calls: list[dict[str, Any]] = []
+        self.purge_calls = 0
 
     def find_matches(
         self,
@@ -302,6 +336,7 @@ class RecordingRepository:
         embedding: Any,
         quality_score: float,
         crop_key: str | None = None,
+        created_by: str | None = None,
     ) -> str:
         self.pending_calls.append(
             {
@@ -313,6 +348,11 @@ class RecordingRepository:
                 "embedding": embedding,
                 "quality_score": quality_score,
                 "crop_key": crop_key,
+                "created_by": created_by,
             }
         )
         return "analysis-created"
+
+    def purge_stale_pending_analyses(self) -> list[str]:
+        self.purge_calls += 1
+        return self.stale_crop_keys

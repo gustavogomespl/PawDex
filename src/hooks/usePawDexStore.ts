@@ -12,6 +12,8 @@ import {
 import { loadPawDexState, savePawDexState } from "@/domain/pawdex/storage";
 import type { PawDexState, Species } from "@/domain/pawdex/types";
 
+type RemotePawDexState = PawDexState & { error?: string };
+
 export type ExistingSightingInput = {
   analysisId: string;
   animalId: string;
@@ -45,6 +47,20 @@ export function usePawDexStore(placeId: string) {
         );
 
         if (!response.ok) {
+          if (isAuthoritativeRemoteFailure(response.status)) {
+            const remoteState = await readRemoteStateError(response);
+
+            if (!isMounted) {
+              return;
+            }
+
+            setState(remoteState);
+            setStateSource("remote");
+            setSelectedAnimalId(null);
+            setWarning(remoteState.error ?? "Nao foi possivel carregar este lugar.");
+            return;
+          }
+
           throw new Error("Remote PawDex state failed.");
         }
 
@@ -204,4 +220,33 @@ function formatRemoteLoadWarning(localWarning: string | null): string {
     "Nao foi possivel carregar a PawDex remota. Usando dados locais.";
 
   return localWarning ? `${remoteWarning} ${localWarning}` : remoteWarning;
+}
+
+function isAuthoritativeRemoteFailure(status: number): boolean {
+  return status === 401 || status === 403 || status === 404;
+}
+
+async function readRemoteStateError(response: Response): Promise<RemotePawDexState> {
+  try {
+    const body = (await response.json()) as Partial<RemotePawDexState>;
+
+    return {
+      places: body.places ?? [],
+      animals: body.animals ?? [],
+      sightings: body.sightings ?? [],
+      albumSlots: body.albumSlots ?? [],
+      error:
+        typeof body.error === "string"
+          ? body.error
+          : "Nao foi possivel carregar este lugar.",
+    };
+  } catch {
+    return {
+      places: [],
+      animals: [],
+      sightings: [],
+      albumSlots: [],
+      error: "Nao foi possivel carregar este lugar.",
+    };
+  }
 }

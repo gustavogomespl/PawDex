@@ -11,7 +11,7 @@ from app.detection import Detector
 from app.embedding import ImageEmbedder, crop_to_box
 from app.privacy import blur_sensitive_regions
 from app.repository import MatchCandidate, PawDexRepository
-from app.storage import ObjectStorage
+from app.storage import ObjectStorage, is_storage_key
 
 
 MATCH_THRESHOLD = 0.8
@@ -54,7 +54,12 @@ class AnalyzeSightingService:
         self.repository = repository
         self.storage = storage
 
-    def analyze(self, image: Image.Image, place_id: str) -> dict[str, Any]:
+    def analyze(
+        self,
+        image: Image.Image,
+        place_id: str,
+        created_by: str | None = None,
+    ) -> dict[str, Any]:
         detection_response = self.detector.detect(image)
         detection = detection_response.best_detection
 
@@ -84,6 +89,8 @@ class AnalyzeSightingService:
                 "recommendation": "needs_better_photo",
             }
 
+        self._purge_stale_pending_crops()
+
         crop_key: str | None = None
         if self.storage is not None:
             # Embedding uses the original crop; only the blurred crop is stored.
@@ -91,23 +98,29 @@ class AnalyzeSightingService:
             crop_key = f"crops/{secrets.token_hex(16)}.jpg"
             self.storage.put(crop_key, encode_jpeg(safe_crop), "image/jpeg")
 
-        matches = self.repository.find_matches(
-            place_id=place_id,
-            species=detection.species,
-            embedding=embedding.vector,
-            model_version=embedding.model_version,
-            limit=3,
-        )
-        analysis_id = self.repository.create_pending_analysis(
-            place_id=place_id,
-            species=detection.species,
-            detector_confidence=detection.confidence,
-            detection_box=asdict(detection.box),
-            model_version=embedding.model_version,
-            embedding=embedding.vector,
-            quality_score=embedding.quality_score,
-            crop_key=crop_key,
-        )
+        try:
+            matches = self.repository.find_matches(
+                place_id=place_id,
+                species=detection.species,
+                embedding=embedding.vector,
+                model_version=embedding.model_version,
+                limit=3,
+            )
+            analysis_id = self.repository.create_pending_analysis(
+                place_id=place_id,
+                species=detection.species,
+                detector_confidence=detection.confidence,
+                detection_box=asdict(detection.box),
+                model_version=embedding.model_version,
+                embedding=embedding.vector,
+                quality_score=embedding.quality_score,
+                crop_key=crop_key,
+                created_by=created_by,
+            )
+        except Exception:
+            if crop_key is not None and self.storage is not None:
+                self.storage.delete(crop_key)
+            raise
 
         return {
             "analysisId": analysis_id,
@@ -117,3 +130,12 @@ class AnalyzeSightingService:
             "matches": [match_to_api(match) for match in matches],
             "recommendation": recommendation_from_matches(matches),
         }
+
+    def _purge_stale_pending_crops(self) -> None:
+        stale_crop_keys = self.repository.purge_stale_pending_analyses()
+        if self.storage is None:
+            return
+
+        for key in stale_crop_keys:
+            if is_storage_key(key):
+                self.storage.delete(key)

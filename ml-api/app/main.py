@@ -374,7 +374,13 @@ def create_app(
         return counts
 
     @app.get("/media/{key:path}", dependencies=[Depends(require_internal_token)])
-    def get_media(key: str) -> Response:
+    def get_media(key: str, user_id: Optional[str] = None) -> Response:
+        repository = get_repository()
+        place_id = repository.get_media_place_id(key)
+        if place_id is None:
+            raise HTTPException(status_code=404, detail="Object not found.")
+
+        authorize_place(place_id, user_id, require_write=False)
         try:
             data, content_type = get_storage().get(key)
         except KeyError as exc:
@@ -628,7 +634,11 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        return get_analyze_service().analyze(image, place_id)
+        return get_analyze_service().analyze(
+            image,
+            place_id,
+            created_by=user_id,
+        )
 
     @app.post("/confirm-sighting", dependencies=[Depends(require_internal_token)])
     def confirm_sighting(

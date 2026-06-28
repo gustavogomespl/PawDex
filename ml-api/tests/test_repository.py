@@ -27,9 +27,11 @@ class FakeCursor:
         self,
         row: dict[str, Any] | None = None,
         rows: list[dict[str, Any]] | None = None,
+        rowcount: int = 0,
     ):
         self.row = row
         self.rows = rows or []
+        self.rowcount = rowcount
 
     def fetchone(self) -> dict[str, Any] | None:
         return self.row
@@ -48,6 +50,9 @@ class RecordingConnection:
         animals: list[dict[str, Any]] | None = None,
         sightings: list[dict[str, Any]] | None = None,
         match_rows: list[dict[str, Any]] | None = None,
+        media_place_row: dict[str, Any] | None = None,
+        photo_rows: list[dict[str, Any]] | None = None,
+        stale_pending_rows: list[dict[str, Any]] | None = None,
         user_row: dict[str, Any] | None = None,
         member_place_rows: list[dict[str, Any]] | None = None,
     ):
@@ -57,6 +62,9 @@ class RecordingConnection:
         self.animals = animals or []
         self.sightings = sightings or []
         self.match_rows = match_rows or []
+        self.media_place_row = media_place_row
+        self.photo_rows = photo_rows or []
+        self.stale_pending_rows = stale_pending_rows or []
         self.user_row = user_row
         self.member_place_rows = member_place_rows or []
         self.queries: list[RecordedQuery] = []
@@ -77,6 +85,11 @@ class RecordingConnection:
             return FakeCursor(row={"id": self.pending_insert_id})
         if normalized.startswith("select * from pending_sighting_analyses"):
             return FakeCursor(row=self.pending_analysis)
+        if (
+            normalized.startswith("delete from pending_sighting_analyses")
+            and "returning crop_key" in normalized
+        ):
+            return FakeCursor(rows=self.stale_pending_rows)
         if normalized.startswith("select id from animals"):
             animal_id, place_id, species = params or (None, None, None)
             animal = next(
@@ -92,13 +105,21 @@ class RecordingConnection:
             return FakeCursor(row=animal)
         if normalized.startswith("delete from pending_sighting_analyses"):
             self.pending_analysis = None
-            return FakeCursor()
+            return FakeCursor(rowcount=1)
         if normalized.startswith("insert into users"):
             return FakeCursor(row=self.user_row)
         if "join place_members" in normalized:
             return FakeCursor(rows=self.member_place_rows)
+        if "primary_photo_url as photo" in normalized:
+            return FakeCursor(rows=self.photo_rows)
+        if "primary_photo_url = %s" in normalized and "photo_url = %s" in normalized:
+            return FakeCursor(row=self.media_place_row)
         if "from animal_embeddings" in normalized and "join animals" in normalized:
             return FakeCursor(rows=self.match_rows)
+        if normalized.startswith("delete from animals"):
+            return FakeCursor(rowcount=2)
+        if normalized.startswith("delete from sightings"):
+            return FakeCursor(rowcount=3)
         if normalized.startswith("select * from places"):
             return FakeCursor(row=self.place)
         if normalized.startswith("select * from animals"):
@@ -376,6 +397,7 @@ def test_create_pending_analysis_inserts_parameterized_row_and_returns_id():
         model_version="mobilenet-v3",
         embedding=embedding,
         quality_score=0.82,
+        created_by="user-1",
     )
 
     insert = only_query_containing(connection, "insert into pending_sighting_analyses")
@@ -384,26 +406,67 @@ def test_create_pending_analysis_inserts_parameterized_row_and_returns_id():
     assert values["place_id"] == "place-office"
     assert values["species"] == "cat"
     assert values["embedding"] is embedding
+    assert values["created_by"] == "user-1"
     assert "%s" in insert.sql
 
 
-def test_create_pending_analysis_purges_stale_rows_before_insert():
-    connection = RecordingConnection(pending_insert_id="analysis-123")
+def test_purge_stale_pending_analyses_returns_deleted_crop_keys():
+    connection = RecordingConnection(
+        stale_pending_rows=[
+            {"crop_key": "crops/stale.jpg"},
+            {"crop_key": None},
+        ]
+    )
     repository = PostgresPawDexRepository(RecordingPool(connection))
 
-    repository.create_pending_analysis(
-        place_id="place-office",
-        species="cat",
-        detector_confidence=0.91,
-        detection_box={"x1": 1, "y1": 2, "x2": 10, "y2": 12},
-        model_version="mobilenet-v3",
-        embedding=[0.1, 0.2, 0.3],
-        quality_score=0.82,
-    )
+    crop_keys = repository.purge_stale_pending_analyses()
 
     purge = only_query_containing(connection, "delete from pending_sighting_analyses")
     assert "created_at < %s" in purge.sql
+    assert "returning crop_key" in purge.sql.lower()
     assert purge.params is not None and len(purge.params) == 1
+    assert crop_keys == ["crops/stale.jpg"]
+
+
+def test_get_media_place_id_searches_confirmed_animal_and_sighting_photos():
+    connection = RecordingConnection(media_place_row={"place_id": "place-office"})
+    repository = PostgresPawDexRepository(RecordingPool(connection))
+
+    place_id = repository.get_media_place_id("crops/x.jpg")
+
+    query = only_query_containing(connection, "primary_photo_url = %s")
+    assert "photo_url = %s" in query.sql
+    assert query.params == ("crops/x.jpg", "crops/x.jpg")
+    assert place_id == "place-office"
+
+
+def test_delete_content_by_user_collects_cascaded_sightings_and_pending_crops():
+    connection = RecordingConnection(
+        photo_rows=[
+            {"photo": "crops/authored-animal.jpg"},
+            {"photo": "crops/cascaded-sighting.jpg"},
+            {"photo": "crops/authored-pending.jpg"},
+        ]
+    )
+    repository = PostgresPawDexRepository(RecordingPool(connection))
+
+    result = repository.delete_content_by_user("user-1")
+
+    photo_query = only_query_containing(connection, "primary_photo_url as photo")
+    normalized = " ".join(photo_query.sql.lower().split())
+    assert "authored_animals" in normalized
+    assert "join authored_animals" in normalized
+    assert "pending_sighting_analyses" in normalized
+    assert photo_query.params == ("user-1", "user-1", "user-1", "user-1")
+    assert result == {
+        "animalsDeleted": 2,
+        "sightingsDeleted": 3,
+        "photoKeys": [
+            "crops/authored-animal.jpg",
+            "crops/cascaded-sighting.jpg",
+            "crops/authored-pending.jpg",
+        ],
+    }
 
 
 def test_confirm_existing_animal_inserts_embedding_for_confirmed_sighting_animal():

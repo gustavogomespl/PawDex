@@ -12,11 +12,13 @@
   --chalk: #eaf2ec;
   --chalk-dim: #b7ccbf;
   --whistle: #e8584c;
+  --font-display: Impact, Haettenschweiler, "Arial Narrow Bold", sans-serif;
+  --font-body: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    sans-serif;
 
   color: var(--chalk);
   background: var(--pitch-deep);
-  font-family: var(--font-body), ui-sans-serif, system-ui, -apple-system,
-    "Segoe UI", sans-serif;
+  font-family: var(--font-body);
 }
 
 * {

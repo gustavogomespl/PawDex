@@ -11,6 +11,25 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const DEFAULT_ML_API_URL = "http://127.0.0.1:8000";
 
+type AuthEnv = {
+  NODE_ENV?: string;
+  PAWDEX_ENABLE_DEV_AUTH?: string;
+};
+
+export function isDevEmailAuthEnabled(env: AuthEnv = process.env): boolean {
+  const flag = env.PAWDEX_ENABLE_DEV_AUTH?.trim().toLowerCase();
+
+  if (flag === "true") {
+    return true;
+  }
+
+  if (flag === "false") {
+    return false;
+  }
+
+  return env.NODE_ENV !== "production";
+}
+
 export function normalizeEmail(raw: string | null | undefined): string | null {
   if (typeof raw !== "string") {
     return null;
