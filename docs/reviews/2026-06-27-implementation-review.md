@@ -130,15 +130,26 @@ Corrigir os defeitos confirmados de maior raio de impacto:
 - **Ciclo de vida do lugar:** `/places` ("meus lugares"), form de criar lugar (`POST /places`, adicionar `photo_url`, geofence lat/lng/radius).
 - **Fluxos de entrada:** convite (token assinado), QR (lib qrcode → página de join), aprovação admin, proximidade GPS (Geolocation API).
 
-### Fase D — Privacidade-by-design & direitos LGPD
-- **Guardar só o recorte** (o ml-api já calcula `crop_to_box` e descarta) no object storage; nunca a foto inteira; remover EXIF.
-- **Blur de rostos/placas** server-side antes de persistir.
-- **Servir imagens por rota autorizada** (não dentro do JSON de estado).
-- **Direitos do titular:** "remover meu conteúdo" (apaga linha + crop no storage), delete admin, export do lugar, captura de consentimento + base legal, `audit_log`, Política de Privacidade + Termos.
-- **Headers/runtime:** `USER` não-root nos Dockerfiles; CSP (img-src limitado ao storage) + HSTS via `next.config.mjs`; rate limiting na frente da inferência.
+### Fase D — Privacidade-by-design & direitos LGPD — 🟡 **EM ANDAMENTO**
+> ✅ **D-onda-1 (direitos do titular) — 2026-06-27.** Migração `0005` (`audit_log` append-only); `repository.delete_content_by_user` (apaga animais+avistamentos do usuário via `created_by`; cascata leva embeddings/sightings) + `record_audit`; endpoint `DELETE /users/{id}/content` (registra auditoria); rota `DELETE /api/account/content` (sessão); página `/account` ("Remover meu conteúdo" com confirmação) + `/terms` (Política/Termos LGPD); `/account` protegido no middleware. Verificado: pytest 105, vitest 69, tsc, next build, **pg real** (erasure zera o conteúdo do usuário + grava no audit_log). *Como as fotos ainda são base64 na linha, apagar a linha já remove a foto — o purge no object storage entra na D-onda-2.*
 
-### Fase E — Fechar o loop social
-- **Persistir sugestões + decisões** em `match_suggestions` (hoje morta) e usar `review_status='needs-review'`; adicionar opção **"não sei"** (hoje só existente/novo).
+> ✅ **D-onda-2 (object storage + crop-only) — 2026-06-27.** Abstração `app/storage.py` (`ObjectStorage` Protocol + `InMemoryObjectStorage` p/ testes + `MinioObjectStorage` S3-compatível); MinIO como 4º serviço no compose + envs `PAWDEX_S3_*`; migração `0006` (`pending_sighting_analyses.crop_key`); no analyze, o **recorte** (`crop_to_box`) é re-encodado em JPEG (**descarta EXIF**) e enviado ao storage, gravando `crop_key` no pending; no confirm, o repositório persiste o **crop_key** como `photo_url`/`primary_photo_url` (fallback p/ a foto antiga) — **nunca mais a foto inteira em base64**; serving por rota autorizada `GET /media/{key}` (ml-api) + proxy `/api/media/[...key]` (sessão) + helper `mediaSrc` nos `<img>`. Verificado: pytest 112, vitest 71, tsc, next build, **MinIO real** (put/get + 404), e crop_key→photo no repositório. *(Bug pego na verificação e corrigido: `S3Error`→`KeyError` para 404.)*
+
+> ✅ **D-onda-3 (blur + purge) — 2026-06-27.** `app/privacy.py`: `blur_regions` (PIL puro, testável) + `detect_sensitive_regions` (OpenCV Haar p/ rostos e placas, defensivo) + `blur_sensitive_regions`; no analyze o crop armazenado é **borrado** (rostos/placas) — embedding continua no crop original; `ObjectStorage.delete` + `is_storage_key`; o "remover meu conteúdo" agora **faz purge dos crops** no object storage (coleta as chaves antes de apagar as linhas). Verificado: pytest 118, vitest 71, tsc; OpenCV 4.11 + cascades carregam (blur funcional, não no-op).
+
+> ✅ **D-onda-4 (admin/abuso) — 2026-06-27.** **Rate limiting** in-memory (`app/ratelimit.py`, sliding-window por usuário) na inferência (`/analyze-sighting` → 429), configurável via `PAWDEX_RATE_LIMIT_PER_MIN`; **export do lugar** (admin) `GET /places/{id}/export` + rota `/api/places/[id]/export` (download JSON) + link na página admin; **delete por admin** `repository.delete_animal` (cascata + coleta crop keys) + `DELETE /places/{id}/animals/{animalId}` (admin, purge no storage, audit) + rota Next + `AnimalAdminList` na página admin. Verificado: pytest 126, vitest 71, tsc, next build.
+
+Itens restantes da Fase D (os 2 menores, adiados):
+- **Captura de consentimento + base legal** (tabela + registro no signin) — acoplado ao auth; baixo valor relativo. *(Termos/Privacidade já existem.)*
+- **CSP** (img-src) — adiado: Next + Turbopack precisam de nonce p/ scripts inline; um CSP fraco com `unsafe-inline` não compensa o risco de quebra sem teste runtime. *(non-root e demais headers de segurança já presentes desde a Fase B.)*
+
+### Fase E — Fechar o loop social — 🟡 **EM ANDAMENTO**
+> ✅ **Redesign visual "álbum da Copa" + feed — 2026-06-27.** Identidade Panini/Copa: binder verde-gramado + papel-figurinha creme + ouro de troféu; tipografia **Anton** (display/numeração) + **Hanken Grotesk** (corpo) via `next/font`; `globals.css` refeito. `AnimalStickerCard` virou **card de jogador** (camisa nº = slot, **OVR**, "posição" pela espécie, chip de raridade). **Raridade por recorrência** (`domain/pawdex/rarity.ts`): pouco visto = Comum, frequente = **Raro** (borda dourada), estrelas = **Lenda** (**cromado holográfico** + varredura de brilho, respeitando reduce-motion). `PlaceHeader` = banner de time + medidor; `AnimalTimeline` = card de detalhe; slots vazios = "por colar". **Feed "Últimos lances"** (`PlaceFeed`) no `PawDexApp`. Verificado: tsc, vitest 75, next build, e **revisão visual por screenshot (Chrome headless) de uma showcase temporária (removida)**.
+>
+> ✅ **Social (parte 2) — 2026-06-27.** **`match_suggestions` agora é gravada** (confirmação de match existente registra a sugestão confirmada — histórico de confirmação da comunidade). **Votação de nomes:** migração `0007` (`name_suggestions`, 1 voto por membro/animal), `repository.suggest_name`/`list_name_suggestions`/`promote_name`, endpoints (membro vota; GET devolve `canPromote`; admin promove), e `NameVoting` (lazy) no card do animal. Verificado: pytest 134, vitest 75, tsc, next build, **pg real** (upsert de voto + ranking + promote).
+>
+> ⏳ Restante da E:
+- ~~Persistir sugestões em `match_suggestions`~~ ✅ feito. Falta opção **"não sei"** no confirm + persistir as rejeitadas.
 - **Feed do lugar** (sightings já ordenadas por `taken_at DESC`).
 - **Fila de revisão anti-duplicata** + votação + "mesclar duplicatas" (admin).
 - **Reports/moderação** ligados ao `review_status`.

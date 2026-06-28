@@ -12,6 +12,7 @@ import type {
   MatchCandidate,
   MatchRecommendation,
 } from "@/domain/matching/types";
+import { mediaSrc } from "@/domain/media";
 import type { Species } from "@/domain/pawdex/types";
 
 type ExistingSightingPayload = {
@@ -371,7 +372,7 @@ export function SightingComposer({
                 disabled={isSubmitting}
                 onClick={() => handleConfirmMatch(animal)}
               >
-                <img src={animal.primaryPhotoUrl} alt="" />
+                <img src={mediaSrc(animal.primaryPhotoUrl)} alt="" />
                 <span>Confirmar como {animal.displayName}</span>
               </button>
             ))}

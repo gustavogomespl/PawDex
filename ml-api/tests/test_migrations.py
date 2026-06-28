@@ -79,3 +79,31 @@ def test_invite_code_migration_chains_and_adds_column():
     assert 'revision = "0004_place_invite_code"' in sql
     assert 'down_revision = "0003_place_profile"' in sql
     assert "invite_code" in sql.lower()
+
+
+def test_audit_log_migration_chains_and_creates_table():
+    sql = _read_migration("0005_audit_log.py")
+    assert 'revision = "0005_audit_log"' in sql
+    assert 'down_revision = "0004_place_invite_code"' in sql
+    assert "create table if not exists audit_log" in sql.lower()
+
+
+def test_crop_key_migration_chains_and_adds_column():
+    sql = _read_migration("0006_pending_crop_key.py")
+    assert 'revision = "0006_pending_crop_key"' in sql
+    assert 'down_revision = "0005_audit_log"' in sql
+    assert "crop_key" in sql.lower()
+
+
+def test_name_suggestions_migration_chains_and_creates_table():
+    sql = _read_migration("0007_name_suggestions.py")
+    assert 'revision = "0007_name_suggestions"' in sql
+    assert 'down_revision = "0006_pending_crop_key"' in sql
+    assert "create table if not exists name_suggestions" in sql.lower()
+
+
+def test_reports_migration_chains_and_creates_table():
+    sql = _read_migration("0008_reports.py")
+    assert 'revision = "0008_reports"' in sql
+    assert 'down_revision = "0007_name_suggestions"' in sql
+    assert "create table if not exists reports" in sql.lower()

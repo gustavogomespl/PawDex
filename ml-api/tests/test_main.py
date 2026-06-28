@@ -47,6 +47,31 @@ class FakeRepository:
         ]
         self.join_calls = []
         self.member_status_calls = []
+        self.delete_content_calls = []
+        self.delete_photo_keys: list[str] = []
+        self.delete_animal_calls = []
+        self.delete_animal_keys: list[str] = []
+        self.audit_calls = []
+        self.name_suggestion_calls = []
+        self.promote_name_calls = []
+        self.name_suggestions = [
+            {"name": "Mingau", "votes": 3},
+            {"name": "Tigrinho", "votes": 1},
+        ]
+        self.report_calls = []
+        self.resolve_report_calls = []
+        self.reports = [
+            {
+                "id": "report-1",
+                "targetType": "animal",
+                "targetId": "animal-1",
+                "reason": "duplicate",
+                "note": None,
+                "status": "open",
+                "createdAt": "2026-06-27T10:00:00Z",
+                "reporterName": "Ana",
+            }
+        ]
 
     def healthcheck(self) -> None:
         self.healthcheck_calls += 1
@@ -72,6 +97,41 @@ class FakeRepository:
 
     def set_member_status(self, place_id: str, user_id: str, status: str):
         self.member_status_calls.append((place_id, user_id, status))
+
+    def delete_content_by_user(self, user_id: str):
+        self.delete_content_calls.append(user_id)
+        return {
+            "animalsDeleted": 2,
+            "sightingsDeleted": 3,
+            "photoKeys": list(self.delete_photo_keys),
+        }
+
+    def record_audit(self, user_id, action, target_type=None, target_id=None, metadata=None):
+        self.audit_calls.append((user_id, action, metadata))
+
+    def delete_animal(self, place_id: str, animal_id: str):
+        self.delete_animal_calls.append((place_id, animal_id))
+        return list(self.delete_animal_keys)
+
+    def suggest_name(self, place_id, animal_id, user_id, name):
+        self.name_suggestion_calls.append((place_id, animal_id, user_id, name))
+
+    def list_name_suggestions(self, place_id, animal_id):
+        return self.name_suggestions
+
+    def promote_name(self, place_id, animal_id, name):
+        self.promote_name_calls.append((place_id, animal_id, name))
+
+    def create_report(self, place_id, target_type, target_id, reporter_id, reason, note):
+        self.report_calls.append(
+            (place_id, target_type, target_id, reporter_id, reason, note)
+        )
+
+    def list_reports(self, place_id, status="open"):
+        return self.reports
+
+    def resolve_report(self, place_id, report_id, resolver_id, status):
+        self.resolve_report_calls.append((place_id, report_id, resolver_id, status))
 
     def upsert_user(self, email: str, name: Optional[str] = None) -> dict[str, object]:
         self.upsert_calls.append({"email": email, "name": name})
@@ -823,6 +883,345 @@ def test_update_member_status_approves_as_admin():
 
     assert response.status_code == 200
     assert repository.member_status_calls == [("place-1", "user-2", "approved")]
+
+
+def test_delete_user_content_removes_and_audits():
+    repository = FakeRepository()
+    client = TestClient(_app_with(repository))
+
+    response = client.delete("/users/user-1/content")
+
+    assert response.status_code == 200
+    assert response.json() == {"animalsDeleted": 2, "sightingsDeleted": 3}
+    assert repository.delete_content_calls == ["user-1"]
+    assert repository.audit_calls[0][0] == "user-1"
+    assert repository.audit_calls[0][1] == "remove_own_content"
+
+
+def test_delete_user_content_purges_stored_crops_only():
+    from app.storage import InMemoryObjectStorage
+
+    storage = InMemoryObjectStorage()
+    storage.put("crops/keep-me-not.jpg", b"x", "image/jpeg")
+    repository = FakeRepository()
+    repository.delete_photo_keys = [
+        "crops/keep-me-not.jpg",
+        "https://seed.example/remote.jpg",  # not a storage key -> left alone
+    ]
+    app = create_app(
+        detector_factory=lambda: FakeDetector(DetectionResponse([], None)),
+        repository_factory=lambda: repository,
+        storage_factory=lambda: storage,
+    )
+    client = TestClient(app)
+
+    response = client.delete("/users/user-1/content")
+
+    assert response.status_code == 200
+    assert response.json() == {"animalsDeleted": 2, "sightingsDeleted": 3}
+    # crop object purged; remote URL untouched (no KeyError to assert, just absent)
+    import pytest
+
+    with pytest.raises(KeyError):
+        storage.get("crops/keep-me-not.jpg")
+
+
+def test_media_endpoint_streams_stored_object():
+    from app.storage import InMemoryObjectStorage
+
+    storage = InMemoryObjectStorage()
+    storage.put("crops/x.jpg", b"\xff\xd8jpegbytes", "image/jpeg")
+    app = create_app(
+        detector_factory=lambda: FakeDetector(DetectionResponse([], None)),
+        repository_factory=lambda: FakeRepository(),
+        storage_factory=lambda: storage,
+    )
+    client = TestClient(app)
+
+    response = client.get("/media/crops/x.jpg")
+
+    assert response.status_code == 200
+    assert response.content == b"\xff\xd8jpegbytes"
+    assert response.headers["content-type"] == "image/jpeg"
+
+
+def test_media_endpoint_404_for_missing_object():
+    from app.storage import InMemoryObjectStorage
+
+    app = create_app(
+        detector_factory=lambda: FakeDetector(DetectionResponse([], None)),
+        repository_factory=lambda: FakeRepository(),
+        storage_factory=lambda: InMemoryObjectStorage(),
+    )
+    client = TestClient(app)
+
+    assert client.get("/media/crops/missing.jpg").status_code == 404
+
+
+def test_export_place_returns_state_for_admin():
+    repository = FakeRepository()
+    client = TestClient(_app_with(repository))
+
+    response = client.get("/places/place-1/export?user_id=admin")
+
+    assert response.status_code == 200
+    assert "animals" in response.json()
+
+
+def test_export_place_forbidden_for_non_admin():
+    repository = FakeRepository()
+    repository.membership = {"role": "member", "status": "approved"}
+    client = TestClient(_app_with(repository))
+
+    assert client.get("/places/place-1/export?user_id=member").status_code == 403
+
+
+def test_admin_delete_animal_purges_crops_and_audits():
+    from app.storage import InMemoryObjectStorage
+
+    storage = InMemoryObjectStorage()
+    storage.put("crops/gone.jpg", b"x", "image/jpeg")
+    repository = FakeRepository()
+    repository.delete_animal_keys = ["crops/gone.jpg", "https://seed/a.jpg"]
+    app = create_app(
+        detector_factory=lambda: FakeDetector(DetectionResponse([], None)),
+        repository_factory=lambda: repository,
+        storage_factory=lambda: storage,
+    )
+    client = TestClient(app)
+
+    response = client.delete("/places/place-1/animals/animal-9?user_id=admin")
+
+    assert response.status_code == 200
+    assert repository.delete_animal_calls == [("place-1", "animal-9")]
+    import pytest
+
+    with pytest.raises(KeyError):
+        storage.get("crops/gone.jpg")
+    assert repository.audit_calls[-1][1] == "admin_delete_animal"
+
+
+def test_admin_delete_animal_forbidden_for_non_admin():
+    repository = FakeRepository()
+    repository.membership = None
+    client = TestClient(_app_with(repository))
+
+    assert (
+        client.delete("/places/place-1/animals/animal-9?user_id=intruder").status_code
+        == 403
+    )
+    assert repository.delete_animal_calls == []
+
+
+def test_suggest_name_records_vote_for_member():
+    repository = FakeRepository()
+    client = TestClient(_app_with(repository))
+
+    response = client.post(
+        "/places/place-1/animals/animal-1/names",
+        json={"userId": "user-1", "name": "  Mingau  "},
+    )
+
+    assert response.status_code == 200
+    assert repository.name_suggestion_calls == [
+        ("place-1", "animal-1", "user-1", "Mingau")
+    ]
+
+
+def test_suggest_name_forbidden_for_non_member():
+    repository = FakeRepository()
+    repository.place_privacy = "invite-only"
+    repository.membership = None
+    client = TestClient(_app_with(repository))
+
+    response = client.post(
+        "/places/place-1/animals/animal-1/names",
+        json={"userId": "intruder", "name": "Hack"},
+    )
+
+    assert response.status_code == 403
+    assert repository.name_suggestion_calls == []
+
+
+def test_list_names_returns_ranked_votes_and_promote_flag_for_admin():
+    repository = FakeRepository()
+    client = TestClient(_app_with(repository))
+
+    response = client.get("/places/place-1/animals/animal-1/names?user_id=admin")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["suggestions"][0] == {"name": "Mingau", "votes": 3}
+    assert body["canPromote"] is True
+
+
+def test_list_names_promote_flag_false_for_member():
+    repository = FakeRepository()
+    repository.membership = {"role": "member", "status": "approved"}
+    client = TestClient(_app_with(repository))
+
+    response = client.get("/places/place-1/animals/animal-1/names?user_id=member")
+
+    assert response.status_code == 200
+    assert response.json()["canPromote"] is False
+
+
+def test_promote_name_sets_official_name_as_admin():
+    repository = FakeRepository()
+    client = TestClient(_app_with(repository))
+
+    response = client.post(
+        "/places/place-1/animals/animal-1/names/promote",
+        json={"userId": "admin", "name": "Mingau"},
+    )
+
+    assert response.status_code == 200
+    assert repository.promote_name_calls == [("place-1", "animal-1", "Mingau")]
+
+
+def test_promote_name_forbidden_for_non_admin():
+    repository = FakeRepository()
+    repository.membership = {"role": "member", "status": "approved"}
+    client = TestClient(_app_with(repository))
+
+    response = client.post(
+        "/places/place-1/animals/animal-1/names/promote",
+        json={"userId": "member", "name": "Mingau"},
+    )
+
+    assert response.status_code == 403
+    assert repository.promote_name_calls == []
+
+
+def test_create_report_records_flag_for_member():
+    repository = FakeRepository()
+    client = TestClient(_app_with(repository))
+
+    response = client.post(
+        "/places/place-1/reports",
+        json={
+            "userId": "user-1",
+            "targetType": "animal",
+            "targetId": "animal-9",
+            "reason": "duplicate",
+            "note": "  mesmo gato do slot 3  ",
+        },
+    )
+
+    assert response.status_code == 200
+    assert repository.report_calls == [
+        ("place-1", "animal", "animal-9", "user-1", "duplicate", "mesmo gato do slot 3")
+    ]
+
+
+def test_create_report_rejects_unknown_reason():
+    repository = FakeRepository()
+    client = TestClient(_app_with(repository))
+
+    response = client.post(
+        "/places/place-1/reports",
+        json={
+            "userId": "user-1",
+            "targetType": "animal",
+            "targetId": "animal-9",
+            "reason": "because",
+        },
+    )
+
+    assert response.status_code == 422
+    assert repository.report_calls == []
+
+
+def test_create_report_forbidden_for_non_member():
+    repository = FakeRepository()
+    repository.place_privacy = "invite-only"
+    repository.membership = None
+    client = TestClient(_app_with(repository))
+
+    response = client.post(
+        "/places/place-1/reports",
+        json={
+            "userId": "intruder",
+            "targetType": "animal",
+            "targetId": "animal-9",
+            "reason": "inappropriate",
+        },
+    )
+
+    assert response.status_code == 403
+    assert repository.report_calls == []
+
+
+def test_list_reports_returns_queue_for_admin():
+    repository = FakeRepository()
+    client = TestClient(_app_with(repository))
+
+    response = client.get("/places/place-1/reports?user_id=admin")
+
+    assert response.status_code == 200
+    assert response.json()["reports"][0]["reason"] == "duplicate"
+
+
+def test_list_reports_forbidden_for_member():
+    repository = FakeRepository()
+    repository.membership = {"role": "member", "status": "approved"}
+    client = TestClient(_app_with(repository))
+
+    assert client.get("/places/place-1/reports?user_id=member").status_code == 403
+
+
+def test_resolve_report_as_admin():
+    repository = FakeRepository()
+    client = TestClient(_app_with(repository))
+
+    response = client.post(
+        "/places/place-1/reports/report-1",
+        json={"userId": "admin", "status": "dismissed"},
+    )
+
+    assert response.status_code == 200
+    assert repository.resolve_report_calls == [
+        ("place-1", "report-1", "admin", "dismissed")
+    ]
+
+
+def test_resolve_report_forbidden_for_member():
+    repository = FakeRepository()
+    repository.membership = {"role": "member", "status": "approved"}
+    client = TestClient(_app_with(repository))
+
+    response = client.post(
+        "/places/place-1/reports/report-1",
+        json={"userId": "member", "status": "resolved"},
+    )
+
+    assert response.status_code == 403
+    assert repository.resolve_report_calls == []
+
+
+def test_analyze_sighting_is_rate_limited(monkeypatch):
+    monkeypatch.setenv("PAWDEX_RATE_LIMIT_PER_MIN", "1")
+    service = FakeAnalyzeService()
+    app = create_app(
+        detector_factory=lambda: FakeDetector(DetectionResponse([], None)),
+        repository_factory=lambda: FakeRepository(),
+        analyze_service_factory=lambda _app: service,
+    )
+    client = TestClient(app)
+
+    first = client.post(
+        "/analyze-sighting",
+        data={"place_id": "place-1", "user_id": "user-1"},
+        files={"file": ("pet.png", make_png_bytes(), "image/png")},
+    )
+    second = client.post(
+        "/analyze-sighting",
+        data={"place_id": "place-1", "user_id": "user-1"},
+        files={"file": ("pet.png", make_png_bytes(), "image/png")},
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 429
 
 
 def test_blocking_endpoints_run_in_threadpool_not_event_loop():

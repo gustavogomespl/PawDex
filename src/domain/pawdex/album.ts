@@ -29,6 +29,11 @@ export function getAlbumSlots(
       ...slot,
       animal:
         state.animals.find((animal) => animal.id === slot.animalId) ?? null,
+      appearances: slot.animalId
+        ? state.sightings.filter(
+            (sighting) => sighting.animalId === slot.animalId,
+          ).length
+        : 0,
     }));
 }
 

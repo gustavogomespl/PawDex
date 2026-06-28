@@ -177,8 +177,31 @@ def test_pending_call_includes_detection_and_embedding_metadata():
             "model_version": MODEL_VERSION,
             "embedding": embedder.result.vector,
             "quality_score": 0.8,
+            "crop_key": None,
         }
     ]
+
+
+def test_analyze_uploads_crop_jpeg_and_records_crop_key():
+    from app.storage import InMemoryObjectStorage
+
+    storage = InMemoryObjectStorage()
+    repository = RecordingRepository(matches=[])
+    service = AnalyzeSightingService(
+        detector=FakeDetector(best_detection=pet_detection()),
+        embedder=FakeEmbedder(quality_score=0.9),
+        repository=repository,
+        storage=storage,
+    )
+
+    result = service.analyze(Image.new("RGB", (100, 100), "white"), "place-1")
+
+    crop_key = result["cropKey"]
+    assert crop_key.startswith("crops/") and crop_key.endswith(".jpg")
+    assert repository.pending_calls[0]["crop_key"] == crop_key
+    data, content_type = storage.get(crop_key)
+    assert content_type == "image/jpeg"
+    assert data[:2] == b"\xff\xd8"  # JPEG magic bytes
 
 
 def pet_detection(
@@ -278,6 +301,7 @@ class RecordingRepository:
         model_version: str,
         embedding: Any,
         quality_score: float,
+        crop_key: str | None = None,
     ) -> str:
         self.pending_calls.append(
             {
@@ -288,6 +312,7 @@ class RecordingRepository:
                 "model_version": model_version,
                 "embedding": embedding,
                 "quality_score": quality_score,
+                "crop_key": crop_key,
             }
         )
         return "analysis-created"

@@ -1,4 +1,4 @@
-import { Camera, LockKeyhole, Sparkles } from "lucide-react";
+import { Camera, LockKeyhole, PawPrint, Trophy } from "lucide-react";
 import type { Place, PlaceProgress } from "@/domain/pawdex/types";
 
 type PlaceHeaderProps = {
@@ -7,29 +7,58 @@ type PlaceHeaderProps = {
   onStartSighting: () => void;
 };
 
+const PRIVACY_LABEL: Record<string, string> = {
+  private: "Privado",
+  "invite-only": "Somente convidados",
+  public: "Publico",
+};
+
 export function PlaceHeader({
   place,
   progress,
   onStartSighting,
 }: PlaceHeaderProps) {
+  const percent =
+    progress.total > 0
+      ? Math.round((progress.discovered / progress.total) * 100)
+      : 0;
+
   return (
     <header className="place-header">
+      <div className="place-header__crest" aria-hidden="true">
+        <PawPrint size={34} />
+      </div>
+
       <div className="place-header__copy">
         <div className="place-header__eyebrow">
-          <Sparkles aria-hidden="true" size={16} />
-          <span>Album local</span>
+          <Trophy aria-hidden="true" size={16} />
+          <span>Album de figurinhas do lugar</span>
         </div>
         <h1>{place.name}</h1>
+
         <div className="place-header__meta">
-          <span>
-            {progress.discovered}/{progress.total} encontrados
-          </span>
           <span className="privacy-pill">
             <LockKeyhole aria-hidden="true" size={14} />
-            {place.privacyLevel}
+            {PRIVACY_LABEL[place.privacyLevel] ?? place.privacyLevel}
+          </span>
+        </div>
+
+        <div className="collection-meter">
+          <div className="collection-meter__track">
+            <span
+              className="collection-meter__fill"
+              style={{ width: `${percent}%` }}
+            />
+          </div>
+          <span className="collection-meter__label">
+            <strong>
+              {progress.discovered}/{progress.total} encontrados
+            </strong>
+            <span> · album {percent}% completo</span>
           </span>
         </div>
       </div>
+
       <button className="primary-action" type="button" onClick={onStartSighting}>
         <Camera aria-hidden="true" size={18} />
         Registrar avistamento

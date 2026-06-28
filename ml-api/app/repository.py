@@ -43,6 +43,7 @@ class PawDexRepository(Protocol):
         model_version: str,
         embedding: Any,
         quality_score: float,
+        crop_key: str | None = None,
     ) -> str: ...
 
     def confirm_existing_animal(
@@ -108,6 +109,59 @@ class PawDexRepository(Protocol):
         place_id: str,
         user_id: str,
         status: str,
+    ) -> None: ...
+
+    def delete_animal(self, place_id: str, animal_id: str) -> list[str]: ...
+
+    def suggest_name(
+        self,
+        place_id: str,
+        animal_id: str,
+        user_id: str,
+        name: str,
+    ) -> None: ...
+
+    def list_name_suggestions(
+        self,
+        place_id: str,
+        animal_id: str,
+    ) -> list[dict[str, Any]]: ...
+
+    def promote_name(self, place_id: str, animal_id: str, name: str) -> None: ...
+
+    def create_report(
+        self,
+        place_id: str,
+        target_type: str,
+        target_id: str,
+        reporter_id: str,
+        reason: str,
+        note: str | None,
+    ) -> None: ...
+
+    def list_reports(
+        self,
+        place_id: str,
+        status: str = "open",
+    ) -> list[dict[str, Any]]: ...
+
+    def resolve_report(
+        self,
+        place_id: str,
+        report_id: str,
+        resolver_id: str,
+        status: str,
+    ) -> None: ...
+
+    def delete_content_by_user(self, user_id: str) -> dict[str, Any]: ...
+
+    def record_audit(
+        self,
+        user_id: str | None,
+        action: str,
+        target_type: str | None = None,
+        target_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None: ...
 
 
@@ -371,6 +425,206 @@ class PostgresPawDexRepository:
                 (status, place_id, user_id),
             )
 
+    def delete_animal(self, place_id: str, animal_id: str) -> list[str]:
+        with self.pool.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT primary_photo_url AS photo FROM animals
+                WHERE id = %s AND place_id = %s
+                UNION ALL
+                SELECT photo_url AS photo FROM sightings
+                WHERE animal_id = %s AND place_id = %s
+                """,
+                (animal_id, place_id, animal_id, place_id),
+            ).fetchall()
+            keys = [row["photo"] for row in rows if row["photo"]]
+            # Cascades sightings + embeddings for this animal.
+            connection.execute(
+                "DELETE FROM animals WHERE id = %s AND place_id = %s",
+                (animal_id, place_id),
+            )
+        return keys
+
+    def suggest_name(
+        self,
+        place_id: str,
+        animal_id: str,
+        user_id: str,
+        name: str,
+    ) -> None:
+        with self.pool.connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO name_suggestions (place_id, animal_id, user_id, name)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (place_id, animal_id, user_id)
+                DO UPDATE SET name = EXCLUDED.name, created_at = now()
+                """,
+                (place_id, animal_id, user_id, name),
+            )
+
+    def list_name_suggestions(
+        self,
+        place_id: str,
+        animal_id: str,
+    ) -> list[dict[str, Any]]:
+        with self.pool.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT name, count(*) AS votes
+                FROM name_suggestions
+                WHERE place_id = %s AND animal_id = %s
+                GROUP BY name
+                ORDER BY votes DESC, name ASC
+                """,
+                (place_id, animal_id),
+            ).fetchall()
+        return [{"name": row["name"], "votes": int(row["votes"])} for row in rows]
+
+    def promote_name(self, place_id: str, animal_id: str, name: str) -> None:
+        with self.pool.connection() as connection:
+            connection.execute(
+                """
+                UPDATE animals
+                SET display_name = %s
+                WHERE id = %s AND place_id = %s
+                """,
+                (name, animal_id, place_id),
+            )
+
+    def create_report(
+        self,
+        place_id: str,
+        target_type: str,
+        target_id: str,
+        reporter_id: str,
+        reason: str,
+        note: str | None,
+    ) -> None:
+        with self.pool.connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO reports (
+                  place_id, target_type, target_id, reporter_id, reason, note
+                )
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (place_id, target_type, target_id, reporter_id, reason, note),
+            )
+            if target_type == "sighting":
+                # Surface the flagged sighting in the matching review loop.
+                connection.execute(
+                    """
+                    UPDATE sightings
+                    SET review_status = 'needs-review'
+                    WHERE id = %s AND place_id = %s
+                    """,
+                    (target_id, place_id),
+                )
+
+    def list_reports(
+        self,
+        place_id: str,
+        status: str = "open",
+    ) -> list[dict[str, Any]]:
+        with self.pool.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT r.id, r.target_type, r.target_id, r.reason, r.note,
+                       r.status, r.created_at, u.name AS reporter_name
+                FROM reports r
+                JOIN users u ON u.id = r.reporter_id
+                WHERE r.place_id = %s AND r.status = %s
+                ORDER BY r.created_at ASC
+                """,
+                (place_id, status),
+            ).fetchall()
+        return [
+            {
+                "id": str(row["id"]),
+                "targetType": row["target_type"],
+                "targetId": row["target_id"],
+                "reason": row["reason"],
+                "note": row["note"],
+                "status": row["status"],
+                "createdAt": iso(row["created_at"]),
+                "reporterName": row["reporter_name"],
+            }
+            for row in rows
+        ]
+
+    def resolve_report(
+        self,
+        place_id: str,
+        report_id: str,
+        resolver_id: str,
+        status: str,
+    ) -> None:
+        with self.pool.connection() as connection:
+            connection.execute(
+                """
+                UPDATE reports
+                SET status = %s, resolved_at = now(), resolved_by = %s
+                WHERE id = %s AND place_id = %s
+                """,
+                (status, resolver_id, report_id, place_id),
+            )
+
+    def delete_content_by_user(self, user_id: str) -> dict[str, Any]:
+        with self.pool.connection() as connection:
+            # Collect photo references first so the caller can purge the stored
+            # crops from object storage after the rows are gone.
+            photo_rows = connection.execute(
+                """
+                SELECT primary_photo_url AS photo FROM animals WHERE created_by = %s
+                UNION ALL
+                SELECT photo_url AS photo FROM sightings WHERE created_by = %s
+                """,
+                (user_id, user_id),
+            ).fetchall()
+            photo_keys = [row["photo"] for row in photo_rows if row["photo"]]
+
+            # Deleting authored animals cascades their sightings/embeddings;
+            # then remove sightings the user authored on other people's animals.
+            animals = connection.execute(
+                "DELETE FROM animals WHERE created_by = %s",
+                (user_id,),
+            ).rowcount
+            sightings = connection.execute(
+                "DELETE FROM sightings WHERE created_by = %s",
+                (user_id,),
+            ).rowcount
+        return {
+            "animalsDeleted": int(animals or 0),
+            "sightingsDeleted": int(sightings or 0),
+            "photoKeys": photo_keys,
+        }
+
+    def record_audit(
+        self,
+        user_id: str | None,
+        action: str,
+        target_type: str | None = None,
+        target_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        with self.pool.connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO audit_log (
+                  user_id, action, target_type, target_id, metadata
+                )
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (
+                    user_id,
+                    action,
+                    target_type,
+                    target_id,
+                    _jsonb(metadata) if metadata is not None else None,
+                ),
+            )
+
     def get_place_state(self, place_id: str) -> dict[str, Any]:
         with self.pool.connection() as connection:
             place = connection.execute(
@@ -460,13 +714,14 @@ class PostgresPawDexRepository:
         model_version: str,
         embedding: Any,
         quality_score: float,
+        crop_key: str | None = None,
     ) -> str:
         sql = """
             INSERT INTO pending_sighting_analyses (
               place_id, species, detector_confidence, detection_box,
-              model_version, embedding, quality_score
+              model_version, embedding, quality_score, crop_key
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
         """
         with self.pool.connection() as connection:
@@ -484,6 +739,7 @@ class PostgresPawDexRepository:
                     model_version,
                     embedding,
                     quality_score,
+                    crop_key,
                 ),
             ).fetchone()
 
@@ -506,6 +762,8 @@ class PostgresPawDexRepository:
             now = datetime.now(timezone.utc)
             sighting_id = _new_id("sighting")
             species = pending["species"]
+            # Persist the stored crop (privacy-by-design), not the full photo.
+            photo = pending.get("crop_key") or photo_url
 
             self._validate_existing_animal(connection, animal_id, place_id, species)
             self._insert_sighting(
@@ -513,7 +771,7 @@ class PostgresPawDexRepository:
                 sighting_id=sighting_id,
                 place_id=place_id,
                 animal_id=animal_id,
-                photo_url=photo_url,
+                photo_url=photo,
                 species=species,
                 zone_label=zone_label,
                 taken_at=now,
@@ -537,8 +795,21 @@ class PostgresPawDexRepository:
                   AND place_id = %s
                   AND species = %s
                 """,
-                (now, photo_url, animal_id, place_id, species),
+                (now, photo, animal_id, place_id, species),
             )
+            if match_confidence is not None:
+                # Record the confirmed AI suggestion (community-confirmation
+                # history; feeds future scoring + the review loop).
+                connection.execute(
+                    """
+                    INSERT INTO match_suggestions (
+                      place_id, sighting_id, candidate_animal_id, species,
+                      score, status
+                    )
+                    VALUES (%s, %s, %s, %s, %s, 'confirmed')
+                    """,
+                    (place_id, sighting_id, animal_id, species, match_confidence),
+                )
             self._consume_pending_analysis(connection, analysis_id, place_id)
 
         return {
@@ -564,6 +835,7 @@ class PostgresPawDexRepository:
             now = datetime.now(timezone.utc)
             animal_id = _new_id("animal")
             sighting_id = _new_id("sighting")
+            photo = pending.get("crop_key") or photo_url
 
             connection.execute(
                 """
@@ -583,7 +855,7 @@ class PostgresPawDexRepository:
                     "",
                     [],
                     "Ocasional",
-                    photo_url,
+                    photo,
                     now,
                     now,
                     created_by,
@@ -594,7 +866,7 @@ class PostgresPawDexRepository:
                 sighting_id=sighting_id,
                 place_id=place_id,
                 animal_id=animal_id,
-                photo_url=photo_url,
+                photo_url=photo,
                 species=species,
                 zone_label=zone_label,
                 taken_at=now,

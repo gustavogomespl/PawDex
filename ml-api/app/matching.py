@@ -1,17 +1,28 @@
 from __future__ import annotations
 
+import secrets
 from dataclasses import asdict
+from io import BytesIO
 from typing import Any
 
 from PIL import Image
 
 from app.detection import Detector
 from app.embedding import ImageEmbedder, crop_to_box
+from app.privacy import blur_sensitive_regions
 from app.repository import MatchCandidate, PawDexRepository
+from app.storage import ObjectStorage
 
 
 MATCH_THRESHOLD = 0.8
 MIN_QUALITY_SCORE = 0.18
+
+
+def encode_jpeg(image: Image.Image, quality: int = 85) -> bytes:
+    """Re-encode a crop as JPEG (drops EXIF/metadata in the process)."""
+    buffer = BytesIO()
+    image.convert("RGB").save(buffer, format="JPEG", quality=quality)
+    return buffer.getvalue()
 
 
 def recommendation_from_matches(matches: list[MatchCandidate]) -> str:
@@ -36,10 +47,12 @@ class AnalyzeSightingService:
         detector: Detector,
         embedder: ImageEmbedder,
         repository: PawDexRepository,
+        storage: ObjectStorage | None = None,
     ):
         self.detector = detector
         self.embedder = embedder
         self.repository = repository
+        self.storage = storage
 
     def analyze(self, image: Image.Image, place_id: str) -> dict[str, Any]:
         detection_response = self.detector.detect(image)
@@ -71,6 +84,13 @@ class AnalyzeSightingService:
                 "recommendation": "needs_better_photo",
             }
 
+        crop_key: str | None = None
+        if self.storage is not None:
+            # Embedding uses the original crop; only the blurred crop is stored.
+            safe_crop = blur_sensitive_regions(crop)
+            crop_key = f"crops/{secrets.token_hex(16)}.jpg"
+            self.storage.put(crop_key, encode_jpeg(safe_crop), "image/jpeg")
+
         matches = self.repository.find_matches(
             place_id=place_id,
             species=detection.species,
@@ -86,12 +106,14 @@ class AnalyzeSightingService:
             model_version=embedding.model_version,
             embedding=embedding.vector,
             quality_score=embedding.quality_score,
+            crop_key=crop_key,
         )
 
         return {
             "analysisId": analysis_id,
             "detection": detection_api,
             "embedding": embedding_api,
+            "cropKey": crop_key,
             "matches": [match_to_api(match) for match in matches],
             "recommendation": recommendation_from_matches(matches),
         }

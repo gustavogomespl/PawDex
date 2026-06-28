@@ -4,6 +4,7 @@ import { useState } from "react";
 import { usePawDexStore } from "@/hooks/usePawDexStore";
 import { AnimalTimeline } from "./AnimalTimeline";
 import { LocalStats } from "./LocalStats";
+import { PlaceFeed } from "./PlaceFeed";
 import { PlaceHeader } from "./PlaceHeader";
 import { SightingComposer } from "./SightingComposer";
 import { StickerAlbumGrid } from "./StickerAlbumGrid";
@@ -85,6 +86,8 @@ export function PawDexApp({ placeId }: PawDexAppProps) {
         latestSightings={store.latestSightings}
       />
 
+      <PlaceFeed sightings={store.latestSightings} animals={store.animals} />
+
       <div className="album-layout">
         <StickerAlbumGrid
           slots={store.albumSlots}
@@ -94,6 +97,7 @@ export function PawDexApp({ placeId }: PawDexAppProps) {
         <AnimalTimeline
           animal={store.selectedAnimal}
           sightings={store.selectedAnimalSightings}
+          placeId={store.place.id}
         />
       </div>
     </main>

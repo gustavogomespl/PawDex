@@ -12,6 +12,7 @@ from fastapi import (
     Form,
     Header,
     HTTPException,
+    Response,
     UploadFile,
 )
 from fastapi.exceptions import RequestValidationError
@@ -20,11 +21,14 @@ from pydantic import BaseModel, Field, ValidationError
 
 from app.config import load_settings
 from app.detection import Detector, load_image
+from app.ratelimit import RateLimiter
+from app.storage import is_storage_key
 
 if TYPE_CHECKING:
     from app.embedding import ImageEmbedder
     from app.matching import AnalyzeSightingService
     from app.repository import PawDexRepository
+    from app.storage import ObjectStorage
 
 # Reject uploads larger than this before reading them into the detection pipeline.
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024
@@ -112,6 +116,24 @@ class MemberStatusRequest(BaseModel):
     status: Literal["approved", "rejected"]
 
 
+class NameRequest(BaseModel):
+    user_id: str = Field(alias="userId")
+    name: str = Field(min_length=1, max_length=40)
+
+
+class ReportRequest(BaseModel):
+    user_id: str = Field(alias="userId")
+    target_type: Literal["sighting", "animal"] = Field(alias="targetType")
+    target_id: str = Field(alias="targetId")
+    reason: Literal["duplicate", "wrong_info", "inappropriate", "at_risk", "privacy"]
+    note: Optional[str] = Field(default=None, max_length=300)
+
+
+class ResolveReportRequest(BaseModel):
+    user_id: str = Field(alias="userId")
+    status: Literal["resolved", "dismissed"]
+
+
 class ConfirmSightingRequest(BaseModel):
     analysis_id: str = Field(alias="analysisId")
     place_id: str = Field(alias="placeId")
@@ -137,6 +159,7 @@ def create_app(
     analyze_service_factory: Optional[
         Callable[[FastAPI], "AnalyzeSightingService"]
     ] = None,
+    storage_factory: Optional[Callable[[], "ObjectStorage"]] = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -179,6 +202,7 @@ def create_app(
             detector=get_detector(),
             embedder=get_embedder(),
             repository=get_repository(),
+            storage=get_storage(),
         )
 
     def default_embedder_factory() -> "ImageEmbedder":
@@ -186,17 +210,34 @@ def create_app(
 
         return TorchvisionMobileNetEmbedder()
 
+    def default_storage_factory() -> "ObjectStorage":
+        from app.storage import MinioObjectStorage
+
+        settings = load_settings()
+        return MinioObjectStorage(
+            endpoint=settings.s3_endpoint,
+            access_key=settings.s3_access_key,
+            secret_key=settings.s3_secret_key,
+            bucket=settings.s3_bucket,
+            secure=settings.s3_secure,
+        )
+
     app.state.detector_factory = detector_factory or default_detector_factory
     app.state.repository_factory = repository_factory or default_repository_factory
     app.state.embedder_factory = embedder_factory or default_embedder_factory
     app.state.analyze_service_factory = (
         analyze_service_factory or default_analyze_service_factory
     )
+    app.state.storage_factory = storage_factory or default_storage_factory
     app.state.detector = None
     app.state.repository = None
     app.state.embedder = None
     app.state.analyze_service = None
+    app.state.storage = None
     app.state.repository_pool = None
+    app.state.rate_limiter = RateLimiter(
+        load_settings().rate_limit_per_min, per_seconds=60
+    )
 
     def get_detector() -> Detector:
         if app.state.detector is None:
@@ -217,6 +258,11 @@ def create_app(
         if app.state.analyze_service is None:
             app.state.analyze_service = app.state.analyze_service_factory(app)
         return app.state.analyze_service
+
+    def get_storage() -> "ObjectStorage":
+        if app.state.storage is None:
+            app.state.storage = app.state.storage_factory()
+        return app.state.storage
 
     def authorize_place(
         place_id: str,
@@ -303,6 +349,38 @@ def create_app(
     def list_user_places(user_id: str) -> dict[str, object]:
         return {"places": get_repository().list_places_for_user(user_id)}
 
+    @app.delete(
+        "/users/{user_id}/content",
+        dependencies=[Depends(require_internal_token)],
+    )
+    def delete_user_content(user_id: str) -> dict[str, object]:
+        repository = get_repository()
+        result = repository.delete_content_by_user(user_id)
+        counts = {
+            "animalsDeleted": result.get("animalsDeleted"),
+            "sightingsDeleted": result.get("sightingsDeleted"),
+        }
+
+        keys = [key for key in result.get("photoKeys", []) if is_storage_key(key)]
+        if keys:
+            storage = get_storage()
+            for key in keys:
+                try:
+                    storage.delete(key)
+                except Exception:
+                    pass  # best-effort purge; row is already gone
+
+        repository.record_audit(user_id, "remove_own_content", metadata=counts)
+        return counts
+
+    @app.get("/media/{key:path}", dependencies=[Depends(require_internal_token)])
+    def get_media(key: str) -> Response:
+        try:
+            data, content_type = get_storage().get(key)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Object not found.") from exc
+        return Response(content=data, media_type=content_type)
+
     @app.get("/invites/{code}", dependencies=[Depends(require_internal_token)])
     def resolve_invite(code: str) -> dict[str, object]:
         place = get_repository().get_place_by_invite_code(code)
@@ -372,6 +450,157 @@ def create_app(
         return {"ok": True}
 
     @app.get(
+        "/places/{place_id}/export",
+        dependencies=[Depends(require_internal_token)],
+    )
+    def export_place(place_id: str, user_id: str) -> dict[str, object]:
+        authorize_admin(place_id, user_id)
+        return get_repository().get_place_state(place_id)
+
+    @app.delete(
+        "/places/{place_id}/animals/{animal_id}",
+        dependencies=[Depends(require_internal_token)],
+    )
+    def admin_delete_animal(
+        place_id: str,
+        animal_id: str,
+        user_id: str,
+    ) -> dict[str, object]:
+        repository = get_repository()
+        authorize_admin(place_id, user_id)
+        keys = [
+            key
+            for key in repository.delete_animal(place_id, animal_id)
+            if is_storage_key(key)
+        ]
+        if keys:
+            storage = get_storage()
+            for key in keys:
+                try:
+                    storage.delete(key)
+                except Exception:
+                    pass
+        repository.record_audit(
+            user_id,
+            "admin_delete_animal",
+            target_type="animal",
+            target_id=animal_id,
+        )
+        return {"ok": True}
+
+    @app.post(
+        "/places/{place_id}/animals/{animal_id}/names",
+        dependencies=[Depends(require_internal_token)],
+    )
+    def suggest_name(
+        place_id: str,
+        animal_id: str,
+        payload: dict[str, Any] = Body(...),
+    ) -> dict[str, object]:
+        try:
+            request = NameRequest.model_validate(payload)
+        except ValidationError as exc:
+            raise RequestValidationError(exc.errors()) from exc
+        authorize_place(place_id, request.user_id, require_write=True)
+        get_repository().suggest_name(
+            place_id, animal_id, request.user_id, request.name.strip()
+        )
+        return {"ok": True}
+
+    @app.get(
+        "/places/{place_id}/animals/{animal_id}/names",
+        dependencies=[Depends(require_internal_token)],
+    )
+    def list_names(
+        place_id: str,
+        animal_id: str,
+        user_id: Optional[str] = None,
+    ) -> dict[str, object]:
+        authorize_place(place_id, user_id, require_write=False)
+        repository = get_repository()
+        membership = repository.get_membership(place_id, user_id) if user_id else None
+        can_promote = bool(
+            membership
+            and membership.get("role") == "admin"
+            and membership.get("status") == "approved"
+        )
+        return {
+            "suggestions": repository.list_name_suggestions(place_id, animal_id),
+            "canPromote": can_promote,
+        }
+
+    @app.post(
+        "/places/{place_id}/animals/{animal_id}/names/promote",
+        dependencies=[Depends(require_internal_token)],
+    )
+    def promote_name(
+        place_id: str,
+        animal_id: str,
+        payload: dict[str, Any] = Body(...),
+    ) -> dict[str, object]:
+        try:
+            request = NameRequest.model_validate(payload)
+        except ValidationError as exc:
+            raise RequestValidationError(exc.errors()) from exc
+        authorize_admin(place_id, request.user_id)
+        get_repository().promote_name(place_id, animal_id, request.name.strip())
+        return {"ok": True}
+
+    @app.post(
+        "/places/{place_id}/reports",
+        dependencies=[Depends(require_internal_token)],
+    )
+    def create_report(
+        place_id: str,
+        payload: dict[str, Any] = Body(...),
+    ) -> dict[str, object]:
+        try:
+            request = ReportRequest.model_validate(payload)
+        except ValidationError as exc:
+            raise RequestValidationError(exc.errors()) from exc
+        authorize_place(place_id, request.user_id, require_write=True)
+        note = request.note.strip() if request.note else None
+        get_repository().create_report(
+            place_id,
+            request.target_type,
+            request.target_id,
+            request.user_id,
+            request.reason,
+            note,
+        )
+        return {"ok": True}
+
+    @app.get(
+        "/places/{place_id}/reports",
+        dependencies=[Depends(require_internal_token)],
+    )
+    def list_reports(
+        place_id: str,
+        user_id: str,
+    ) -> dict[str, object]:
+        authorize_admin(place_id, user_id)
+        return {"reports": get_repository().list_reports(place_id, "open")}
+
+    @app.post(
+        "/places/{place_id}/reports/{report_id}",
+        dependencies=[Depends(require_internal_token)],
+    )
+    def resolve_report(
+        place_id: str,
+        report_id: str,
+        payload: dict[str, Any] = Body(...),
+    ) -> dict[str, object]:
+        try:
+            request = ResolveReportRequest.model_validate(payload)
+        except ValidationError as exc:
+            raise RequestValidationError(exc.errors()) from exc
+        authorize_admin(place_id, request.user_id)
+        get_repository().resolve_report(
+            place_id, report_id, request.user_id, request.status
+        )
+        return {"ok": True}
+
+    @app.get(
         "/places/{place_id}/state",
         dependencies=[Depends(require_internal_token)],
     )
@@ -389,6 +618,10 @@ def create_app(
         file: UploadFile = File(...),
     ) -> dict[str, object]:
         authorize_place(place_id, user_id, require_write=True)
+        if not app.state.rate_limiter.allow(user_id):
+            raise HTTPException(
+                status_code=429, detail="Too many requests. Try again shortly."
+            )
         image_bytes = read_upload_within_limit(file)
         try:
             image = load_image(image_bytes)

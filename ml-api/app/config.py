@@ -14,6 +14,12 @@ class Settings:
     yolo_confidence: float
     allowed_origins: tuple[str, ...]
     internal_token: str
+    s3_endpoint: str
+    s3_access_key: str
+    s3_secret_key: str
+    s3_bucket: str
+    s3_secure: bool
+    rate_limit_per_min: int
 
 
 def parse_origins(raw: str) -> tuple[str, ...]:
@@ -31,4 +37,10 @@ def load_settings() -> Settings:
             os.getenv("PAWDEX_ALLOWED_ORIGINS", DEFAULT_ALLOWED_ORIGINS)
         ),
         internal_token=os.getenv("PAWDEX_INTERNAL_TOKEN", ""),
+        s3_endpoint=os.getenv("PAWDEX_S3_ENDPOINT", "minio:9000"),
+        s3_access_key=os.getenv("PAWDEX_S3_ACCESS_KEY", "pawdex"),
+        s3_secret_key=os.getenv("PAWDEX_S3_SECRET_KEY", "pawdex-minio-secret"),
+        s3_bucket=os.getenv("PAWDEX_S3_BUCKET", "pawdex"),
+        s3_secure=os.getenv("PAWDEX_S3_SECURE", "false").lower() == "true",
+        rate_limit_per_min=int(os.getenv("PAWDEX_RATE_LIMIT_PER_MIN", "60")),
     )
