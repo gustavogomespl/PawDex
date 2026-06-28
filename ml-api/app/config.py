@@ -26,7 +26,30 @@ def parse_origins(raw: str) -> tuple[str, ...]:
     return tuple(origin.strip() for origin in raw.split(",") if origin.strip())
 
 
+def env_first(*names: str, default: str) -> str:
+    for name in names:
+        value = os.getenv(name)
+        if value:
+            return value
+    return default
+
+
+def parse_bool(raw: str) -> bool:
+    return raw.lower() in ("1", "true", "yes", "on")
+
+
 def load_settings() -> Settings:
+    s3_endpoint = env_first(
+        "PAWDEX_S3_ENDPOINT",
+        "AWS_ENDPOINT_URL",
+        default="minio:9000",
+    )
+    s3_secure = (
+        parse_bool(os.environ["PAWDEX_S3_SECURE"])
+        if "PAWDEX_S3_SECURE" in os.environ
+        else s3_endpoint.startswith("https://")
+    )
+
     return Settings(
         database_url=os.getenv(
             "DATABASE_URL", "postgresql://pawdex:pawdex@127.0.0.1:5432/pawdex"
@@ -37,10 +60,22 @@ def load_settings() -> Settings:
             os.getenv("PAWDEX_ALLOWED_ORIGINS", DEFAULT_ALLOWED_ORIGINS)
         ),
         internal_token=os.getenv("PAWDEX_INTERNAL_TOKEN", ""),
-        s3_endpoint=os.getenv("PAWDEX_S3_ENDPOINT", "minio:9000"),
-        s3_access_key=os.getenv("PAWDEX_S3_ACCESS_KEY", "pawdex"),
-        s3_secret_key=os.getenv("PAWDEX_S3_SECRET_KEY", "pawdex-minio-secret"),
-        s3_bucket=os.getenv("PAWDEX_S3_BUCKET", "pawdex"),
-        s3_secure=os.getenv("PAWDEX_S3_SECURE", "false").lower() == "true",
+        s3_endpoint=s3_endpoint,
+        s3_access_key=env_first(
+            "PAWDEX_S3_ACCESS_KEY",
+            "AWS_ACCESS_KEY_ID",
+            default="pawdex",
+        ),
+        s3_secret_key=env_first(
+            "PAWDEX_S3_SECRET_KEY",
+            "AWS_SECRET_ACCESS_KEY",
+            default="pawdex-minio-secret",
+        ),
+        s3_bucket=env_first(
+            "PAWDEX_S3_BUCKET",
+            "AWS_S3_BUCKET_NAME",
+            default="pawdex",
+        ),
+        s3_secure=s3_secure,
         rate_limit_per_min=int(os.getenv("PAWDEX_RATE_LIMIT_PER_MIN", "60")),
     )

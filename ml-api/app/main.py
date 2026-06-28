@@ -1,7 +1,6 @@
 import math
 from collections.abc import Callable
 from contextlib import asynccontextmanager
-from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, Literal, Optional
 
 from fastapi import (
@@ -302,22 +301,6 @@ def create_app(
         get_repository().healthcheck()
         response["database"] = "connected"
         return response
-
-    @app.post("/detect")
-    def detect(file: UploadFile = File(...)) -> dict[str, object]:
-        image_bytes = read_upload_within_limit(file)
-        try:
-            image = load_image(image_bytes)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-        result = get_detector().detect(image)
-        return {
-            "detections": [asdict(detection) for detection in result.detections],
-            "bestDetection": asdict(result.best_detection)
-            if result.best_detection is not None
-            else None,
-        }
 
     @app.post("/users/sync", dependencies=[Depends(require_internal_token)])
     def sync_user(payload: SyncUserRequest) -> dict[str, object]:
