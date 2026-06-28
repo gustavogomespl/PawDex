@@ -60,6 +60,7 @@ export type PawDexState = {
 
 export type AlbumSlotView = AlbumSlot & {
   animal: Animal | null;
+  appearances: number;
 };
 
 export type PlaceProgress = {
