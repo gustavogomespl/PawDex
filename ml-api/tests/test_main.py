@@ -48,6 +48,7 @@ class FakeRepository:
         self.join_calls = []
         self.member_status_calls = []
         self.delete_content_calls = []
+        self.delete_photo_keys: list[str] = []
         self.audit_calls = []
 
     def healthcheck(self) -> None:
@@ -77,7 +78,11 @@ class FakeRepository:
 
     def delete_content_by_user(self, user_id: str):
         self.delete_content_calls.append(user_id)
-        return {"animalsDeleted": 2, "sightingsDeleted": 3}
+        return {
+            "animalsDeleted": 2,
+            "sightingsDeleted": 3,
+            "photoKeys": list(self.delete_photo_keys),
+        }
 
     def record_audit(self, user_id, action, target_type=None, target_id=None, metadata=None):
         self.audit_calls.append((user_id, action, metadata))
@@ -845,6 +850,34 @@ def test_delete_user_content_removes_and_audits():
     assert repository.delete_content_calls == ["user-1"]
     assert repository.audit_calls[0][0] == "user-1"
     assert repository.audit_calls[0][1] == "remove_own_content"
+
+
+def test_delete_user_content_purges_stored_crops_only():
+    from app.storage import InMemoryObjectStorage
+
+    storage = InMemoryObjectStorage()
+    storage.put("crops/keep-me-not.jpg", b"x", "image/jpeg")
+    repository = FakeRepository()
+    repository.delete_photo_keys = [
+        "crops/keep-me-not.jpg",
+        "https://seed.example/remote.jpg",  # not a storage key -> left alone
+    ]
+    app = create_app(
+        detector_factory=lambda: FakeDetector(DetectionResponse([], None)),
+        repository_factory=lambda: repository,
+        storage_factory=lambda: storage,
+    )
+    client = TestClient(app)
+
+    response = client.delete("/users/user-1/content")
+
+    assert response.status_code == 200
+    assert response.json() == {"animalsDeleted": 2, "sightingsDeleted": 3}
+    # crop object purged; remote URL untouched (no KeyError to assert, just absent)
+    import pytest
+
+    with pytest.raises(KeyError):
+        storage.get("crops/keep-me-not.jpg")
 
 
 def test_media_endpoint_streams_stored_object():

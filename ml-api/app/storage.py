@@ -9,6 +9,15 @@ class ObjectStorage(Protocol):
 
     def get(self, key: str) -> tuple[bytes, str]: ...
 
+    def delete(self, key: str) -> None: ...
+
+
+def is_storage_key(reference: str | None) -> bool:
+    """True for object-storage keys (not absolute URLs, data URLs or paths)."""
+    if not reference:
+        return False
+    return not reference.startswith(("http://", "https://", "data:", "/"))
+
 
 class InMemoryObjectStorage:
     """Test/dev double — keeps objects in a dict."""
@@ -23,6 +32,9 @@ class InMemoryObjectStorage:
         if key not in self._objects:
             raise KeyError(key)
         return self._objects[key]
+
+    def delete(self, key: str) -> None:
+        self._objects.pop(key, None)
 
 
 class MinioObjectStorage:
@@ -75,3 +87,6 @@ class MinioObjectStorage:
             response.close()
             response.release_conn()
         return data, content_type
+
+    def delete(self, key: str) -> None:
+        self.client.remove_object(self.bucket, key)

@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from app.config import load_settings
 from app.detection import Detector, load_image
+from app.storage import is_storage_key
 
 if TYPE_CHECKING:
     from app.embedding import ImageEmbedder
@@ -333,8 +334,22 @@ def create_app(
     def delete_user_content(user_id: str) -> dict[str, object]:
         repository = get_repository()
         result = repository.delete_content_by_user(user_id)
-        repository.record_audit(user_id, "remove_own_content", metadata=result)
-        return result
+        counts = {
+            "animalsDeleted": result.get("animalsDeleted"),
+            "sightingsDeleted": result.get("sightingsDeleted"),
+        }
+
+        keys = [key for key in result.get("photoKeys", []) if is_storage_key(key)]
+        if keys:
+            storage = get_storage()
+            for key in keys:
+                try:
+                    storage.delete(key)
+                except Exception:
+                    pass  # best-effort purge; row is already gone
+
+        repository.record_audit(user_id, "remove_own_content", metadata=counts)
+        return counts
 
     @app.get("/media/{key:path}", dependencies=[Depends(require_internal_token)])
     def get_media(key: str) -> Response:

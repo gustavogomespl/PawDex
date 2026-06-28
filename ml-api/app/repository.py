@@ -385,6 +385,18 @@ class PostgresPawDexRepository:
 
     def delete_content_by_user(self, user_id: str) -> dict[str, Any]:
         with self.pool.connection() as connection:
+            # Collect photo references first so the caller can purge the stored
+            # crops from object storage after the rows are gone.
+            photo_rows = connection.execute(
+                """
+                SELECT primary_photo_url AS photo FROM animals WHERE created_by = %s
+                UNION ALL
+                SELECT photo_url AS photo FROM sightings WHERE created_by = %s
+                """,
+                (user_id, user_id),
+            ).fetchall()
+            photo_keys = [row["photo"] for row in photo_rows if row["photo"]]
+
             # Deleting authored animals cascades their sightings/embeddings;
             # then remove sightings the user authored on other people's animals.
             animals = connection.execute(
@@ -398,6 +410,7 @@ class PostgresPawDexRepository:
         return {
             "animalsDeleted": int(animals or 0),
             "sightingsDeleted": int(sightings or 0),
+            "photoKeys": photo_keys,
         }
 
     def record_audit(

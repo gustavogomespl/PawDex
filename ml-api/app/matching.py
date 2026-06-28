@@ -9,6 +9,7 @@ from PIL import Image
 
 from app.detection import Detector
 from app.embedding import ImageEmbedder, crop_to_box
+from app.privacy import blur_sensitive_regions
 from app.repository import MatchCandidate, PawDexRepository
 from app.storage import ObjectStorage
 
@@ -85,8 +86,10 @@ class AnalyzeSightingService:
 
         crop_key: str | None = None
         if self.storage is not None:
+            # Embedding uses the original crop; only the blurred crop is stored.
+            safe_crop = blur_sensitive_regions(crop)
             crop_key = f"crops/{secrets.token_hex(16)}.jpg"
-            self.storage.put(crop_key, encode_jpeg(crop), "image/jpeg")
+            self.storage.put(crop_key, encode_jpeg(safe_crop), "image/jpeg")
 
         matches = self.repository.find_matches(
             place_id=place_id,
