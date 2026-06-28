@@ -51,6 +51,8 @@ class FakeRepository:
         self.delete_photo_keys: list[str] = []
         self.delete_animal_calls = []
         self.delete_animal_keys: list[str] = []
+        self.media_place_id = "place-1"
+        self.media_key_calls: list[str] = []
         self.audit_calls = []
         self.name_suggestion_calls = []
         self.promote_name_calls = []
@@ -112,6 +114,10 @@ class FakeRepository:
     def delete_animal(self, place_id: str, animal_id: str):
         self.delete_animal_calls.append((place_id, animal_id))
         return list(self.delete_animal_keys)
+
+    def get_media_place_id(self, key: str):
+        self.media_key_calls.append(key)
+        return self.media_place_id
 
     def suggest_name(self, place_id, animal_id, user_id, name):
         self.name_suggestion_calls.append((place_id, animal_id, user_id, name))
@@ -223,9 +229,16 @@ class FakeAnalyzeService:
     def __init__(self):
         self.calls = []
 
-    def analyze(self, image, place_id: str) -> dict[str, object]:
+    def analyze(
+        self,
+        image,
+        place_id: str,
+        created_by: Optional[str] = None,
+    ) -> dict[str, object]:
         assert image.mode == "RGB"
-        self.calls.append({"size": image.size, "place_id": place_id})
+        self.calls.append(
+            {"size": image.size, "place_id": place_id, "created_by": created_by}
+        )
         return {
             "analysisId": "analysis-1",
             "detection": None,
@@ -362,7 +375,9 @@ def test_analyze_sighting_forwards_image_and_place_to_service():
         "matches": [],
         "recommendation": "probably_new",
     }
-    assert service.calls == [{"size": (12, 8), "place_id": "place-1"}]
+    assert service.calls == [
+        {"size": (12, 8), "place_id": "place-1", "created_by": "user-1"}
+    ]
 
 
 def test_analyze_sighting_rejects_invalid_image():
@@ -941,8 +956,48 @@ def test_media_endpoint_streams_stored_object():
     response = client.get("/media/crops/x.jpg")
 
     assert response.status_code == 200
+    assert app.state.repository.media_key_calls == ["crops/x.jpg"]
     assert response.content == b"\xff\xd8jpegbytes"
     assert response.headers["content-type"] == "image/jpeg"
+
+
+def test_media_endpoint_forbids_private_place_for_non_member():
+    from app.storage import InMemoryObjectStorage
+
+    storage = InMemoryObjectStorage()
+    storage.put("crops/private.jpg", b"x", "image/jpeg")
+    repository = FakeRepository()
+    repository.place_privacy = "invite-only"
+    repository.membership = None
+    app = create_app(
+        detector_factory=lambda: FakeDetector(DetectionResponse([], None)),
+        repository_factory=lambda: repository,
+        storage_factory=lambda: storage,
+    )
+    client = TestClient(app)
+
+    response = client.get("/media/crops/private.jpg?user_id=intruder")
+
+    assert response.status_code == 403
+
+
+def test_media_endpoint_404_when_key_is_not_linked_to_content():
+    from app.storage import InMemoryObjectStorage
+
+    storage = InMemoryObjectStorage()
+    storage.put("crops/orphan.jpg", b"x", "image/jpeg")
+    repository = FakeRepository()
+    repository.media_place_id = None
+    app = create_app(
+        detector_factory=lambda: FakeDetector(DetectionResponse([], None)),
+        repository_factory=lambda: repository,
+        storage_factory=lambda: storage,
+    )
+    client = TestClient(app)
+
+    response = client.get("/media/crops/orphan.jpg?user_id=user-1")
+
+    assert response.status_code == 404
 
 
 def test_media_endpoint_404_for_missing_object():

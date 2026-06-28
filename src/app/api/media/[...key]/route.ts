@@ -15,9 +15,12 @@ export async function GET(
   const { key } = await params;
   const keyPath = key.map(encodeURIComponent).join("/");
   const mlApiUrl = process.env.ML_API_URL ?? DEFAULT_ML_API_URL;
+  const target =
+    `${mlApiUrl}/media/${keyPath}` +
+    `?user_id=${encodeURIComponent(session.user.id)}`;
 
   try {
-    const response = await fetch(`${mlApiUrl}/media/${keyPath}`, {
+    const response = await fetch(target, {
       cache: "no-store",
       headers: internalApiHeaders(),
     });

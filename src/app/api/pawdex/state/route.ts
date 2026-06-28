@@ -17,6 +17,26 @@ function emptyState(error: string): PawDexStateError {
   };
 }
 
+function stateLoadError(status: number): string {
+  if (status === 401) {
+    return "Nao autenticado.";
+  }
+
+  if (status === 403) {
+    return "Sem permissao para acessar este lugar.";
+  }
+
+  if (status === 404) {
+    return "Local nao encontrado.";
+  }
+
+  return "Nao foi possivel carregar a PawDex agora.";
+}
+
+function stateLoadStatus(status: number): number {
+  return [401, 403, 404].includes(status) ? status : 502;
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const placeId = searchParams.get("placeId");
@@ -38,10 +58,9 @@ export async function GET(request: Request) {
     const response = await fetch(target, { headers: internalApiHeaders() });
 
     if (!response.ok) {
-      return NextResponse.json(
-        emptyState("Nao foi possivel carregar a PawDex agora."),
-        { status: 502 },
-      );
+      return NextResponse.json(emptyState(stateLoadError(response.status)), {
+        status: stateLoadStatus(response.status),
+      });
     }
 
     return NextResponse.json(await response.json());

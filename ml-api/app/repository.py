@@ -44,7 +44,12 @@ class PawDexRepository(Protocol):
         embedding: Any,
         quality_score: float,
         crop_key: str | None = None,
+        created_by: str | None = None,
     ) -> str: ...
+
+    def purge_stale_pending_analyses(self) -> list[str]: ...
+
+    def get_media_place_id(self, key: str) -> str | None: ...
 
     def confirm_existing_animal(
         self,
@@ -576,11 +581,27 @@ class PostgresPawDexRepository:
             # crops from object storage after the rows are gone.
             photo_rows = connection.execute(
                 """
-                SELECT primary_photo_url AS photo FROM animals WHERE created_by = %s
+                WITH authored_animals AS (
+                  SELECT id, place_id, primary_photo_url
+                  FROM animals
+                  WHERE created_by = %s
+                )
+                SELECT primary_photo_url AS photo FROM authored_animals
                 UNION ALL
                 SELECT photo_url AS photo FROM sightings WHERE created_by = %s
+                UNION ALL
+                SELECT s.photo_url AS photo
+                FROM sightings s
+                JOIN authored_animals a
+                  ON a.id = s.animal_id
+                 AND a.place_id = s.place_id
+                WHERE s.created_by IS DISTINCT FROM %s
+                UNION ALL
+                SELECT crop_key AS photo
+                FROM pending_sighting_analyses
+                WHERE created_by = %s
                 """,
-                (user_id, user_id),
+                (user_id, user_id, user_id, user_id),
             ).fetchall()
             photo_keys = [row["photo"] for row in photo_rows if row["photo"]]
 
@@ -594,6 +615,10 @@ class PostgresPawDexRepository:
                 "DELETE FROM sightings WHERE created_by = %s",
                 (user_id,),
             ).rowcount
+            connection.execute(
+                "DELETE FROM pending_sighting_analyses WHERE created_by = %s",
+                (user_id,),
+            )
         return {
             "animalsDeleted": int(animals or 0),
             "sightingsDeleted": int(sightings or 0),
@@ -715,20 +740,17 @@ class PostgresPawDexRepository:
         embedding: Any,
         quality_score: float,
         crop_key: str | None = None,
+        created_by: str | None = None,
     ) -> str:
         sql = """
             INSERT INTO pending_sighting_analyses (
               place_id, species, detector_confidence, detection_box,
-              model_version, embedding, quality_score, crop_key
+              model_version, embedding, quality_score, crop_key, created_by
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
         """
         with self.pool.connection() as connection:
-            connection.execute(
-                "DELETE FROM pending_sighting_analyses WHERE created_at < %s",
-                (datetime.now(timezone.utc) - PENDING_ANALYSIS_TTL,),
-            )
             row = connection.execute(
                 sql,
                 (
@@ -740,12 +762,38 @@ class PostgresPawDexRepository:
                     embedding,
                     quality_score,
                     crop_key,
+                    created_by,
                 ),
             ).fetchone()
 
         if row is None:
             raise RuntimeError("Pending sighting analysis insert did not return an id.")
         return str(row["id"])
+
+    def purge_stale_pending_analyses(self) -> list[str]:
+        with self.pool.connection() as connection:
+            rows = connection.execute(
+                """
+                DELETE FROM pending_sighting_analyses
+                WHERE created_at < %s
+                RETURNING crop_key
+                """,
+                (datetime.now(timezone.utc) - PENDING_ANALYSIS_TTL,),
+            ).fetchall()
+        return [row["crop_key"] for row in rows if row["crop_key"]]
+
+    def get_media_place_id(self, key: str) -> str | None:
+        with self.pool.connection() as connection:
+            row = connection.execute(
+                """
+                SELECT place_id FROM animals WHERE primary_photo_url = %s
+                UNION
+                SELECT place_id FROM sightings WHERE photo_url = %s
+                LIMIT 1
+                """,
+                (key, key),
+            ).fetchone()
+        return row["place_id"] if row else None
 
     def confirm_existing_animal(
         self,
