@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { auth } from "@/auth";
+import { internalApiHeaders } from "@/domain/auth/internal";
 import type { PawDexState } from "@/domain/pawdex/types";
 
 const DEFAULT_ML_API_URL = "http://127.0.0.1:8000";
@@ -25,12 +27,15 @@ export async function GET(request: Request) {
     });
   }
 
+  const session = await auth();
+  const userId = session?.user?.id;
   const mlApiUrl = process.env.ML_API_URL ?? DEFAULT_ML_API_URL;
+  const target =
+    `${mlApiUrl}/places/${encodeURIComponent(placeId)}/state` +
+    (userId ? `?user_id=${encodeURIComponent(userId)}` : "");
 
   try {
-    const response = await fetch(
-      `${mlApiUrl}/places/${encodeURIComponent(placeId)}/state`,
-    );
+    const response = await fetch(target, { headers: internalApiHeaders() });
 
     if (!response.ok) {
       return NextResponse.json(

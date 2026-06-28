@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { auth } from "@/auth";
+import { internalApiHeaders } from "@/domain/auth/internal";
 import type {
   ConfirmSightingPayload,
   ConfirmSightingResponse,
@@ -15,6 +17,11 @@ function emptyResponse(error: string): ConfirmSightingResponse {
 }
 
 export async function POST(request: Request) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json(emptyResponse("Nao autenticado."), { status: 401 });
+  }
+
   let payload: ConfirmSightingPayload;
 
   try {
@@ -42,8 +49,8 @@ export async function POST(request: Request) {
   try {
     const response = await fetch(`${mlApiUrl}/confirm-sighting`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
+      headers: internalApiHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify({ ...payload, userId: session.user.id }),
     });
 
     if (!response.ok) {

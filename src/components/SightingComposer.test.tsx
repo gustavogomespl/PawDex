@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { analyzePetSighting } from "@/domain/matching/client";
 import type { AnalyzeSightingResponse } from "@/domain/matching/types";
-import { SightingComposer } from "./SightingComposer";
+import { SightingComposer, computeCaptureSize } from "./SightingComposer";
 
 vi.mock("@/domain/matching/client", () => ({
   analyzePetSighting: vi.fn(),
@@ -30,9 +30,9 @@ function renderComposer(overrides = {}) {
     ...overrides,
   };
 
-  render(<SightingComposer {...props} />);
+  const utils = render(<SightingComposer {...props} />);
 
-  return props;
+  return { ...props, ...utils };
 }
 
 describe("SightingComposer", () => {
@@ -109,7 +109,7 @@ describe("SightingComposer", () => {
 
     const file = new File(["pet"], "pet.png", { type: "image/png" });
     await user.upload(screen.getByLabelText(/enviar imagem/i), file);
-    await user.type(screen.getByLabelText(/nome do animal/i), "Nina");
+    await user.type(await screen.findByLabelText(/nome do animal/i), "Nina");
     await user.selectOptions(screen.getByLabelText(/especie/i), "cat");
     await user.click(screen.getByRole("button", { name: /cadastrar novo/i }));
 
@@ -285,16 +285,20 @@ describe("SightingComposer", () => {
     });
     HTMLCanvasElement.prototype.toDataURL = vi
       .fn()
-      .mockReturnValue("data:image/png;base64,cGV0");
+      .mockReturnValue("data:image/jpeg;base64,cGV0");
     renderComposer();
 
     await user.click(screen.getByRole("button", { name: /abrir camera/i }));
     await user.click(screen.getByRole("button", { name: /capturar foto/i }));
 
+    expect(HTMLCanvasElement.prototype.toDataURL).toHaveBeenCalledWith(
+      "image/jpeg",
+      expect.any(Number),
+    );
     expect(analyzePetSightingMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        name: "camera-sighting.png",
-        type: "image/png",
+        name: "camera-sighting.jpg",
+        type: "image/jpeg",
       }),
       placeId,
     );
@@ -503,5 +507,92 @@ describe("SightingComposer", () => {
       photoUrl: "data:image/png;base64,c2Vjb25kLnBuZw==",
       matchConfidence: 0.92,
     });
+  });
+
+  it("stops the camera stream when the composer unmounts", async () => {
+    const user = userEvent.setup();
+    const stop = vi.fn();
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [{ stop }] }),
+      },
+    });
+    const { unmount } = renderComposer();
+
+    await user.click(screen.getByRole("button", { name: /abrir camera/i }));
+    await screen.findByRole("button", { name: /capturar foto/i });
+    unmount();
+
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops the camera when a file is uploaded while the camera is open", async () => {
+    const user = userEvent.setup();
+    const stop = vi.fn();
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [{ stop }] }),
+      },
+    });
+    renderComposer();
+
+    await user.click(screen.getByRole("button", { name: /abrir camera/i }));
+    await screen.findByRole("button", { name: /capturar foto/i });
+    await user.upload(
+      screen.getByLabelText(/enviar imagem/i),
+      new File(["pet"], "pet.png", { type: "image/png" }),
+    );
+
+    expect(stop).toHaveBeenCalled();
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: /capturar foto/i }),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  it("does not submit a new animal twice on rapid clicks", async () => {
+    const user = userEvent.setup();
+    const onCreateNew = vi.fn().mockReturnValue(new Promise<void>(() => {}));
+    analyzePetSightingMock.mockResolvedValue({
+      ...defaultAnalyzeResponse,
+      analysisId: "analysis-guard-1",
+      detection: {
+        species: "cat",
+        label: "cat",
+        confidence: 0.8,
+        box: { x1: 1, y1: 2, x2: 40, y2: 50 },
+      },
+      recommendation: "probably_new",
+    });
+    renderComposer({ onCreateNew });
+
+    await user.upload(
+      screen.getByLabelText(/enviar imagem/i),
+      new File(["pet"], "pet.png", { type: "image/png" }),
+    );
+    await user.type(await screen.findByLabelText(/nome do animal/i), "Nina");
+    const submit = screen.getByRole("button", { name: /cadastrar novo/i });
+    await user.click(submit);
+    await user.click(submit);
+
+    expect(onCreateNew).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("computeCaptureSize", () => {
+  it("keeps images within the limit unchanged", () => {
+    expect(computeCaptureSize(640, 480, 1280)).toEqual({ width: 640, height: 480 });
+  });
+
+  it("scales down by the longer side preserving aspect ratio", () => {
+    expect(computeCaptureSize(4000, 3000, 1280)).toEqual({ width: 1280, height: 960 });
+    expect(computeCaptureSize(1000, 2000, 1000)).toEqual({ width: 500, height: 1000 });
+  });
+
+  it("never returns a dimension below one pixel", () => {
+    expect(computeCaptureSize(0, 0, 1280)).toEqual({ width: 1, height: 1 });
   });
 });

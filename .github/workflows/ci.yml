@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main, pawdex-web-mvp]
+  pull_request:
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Type check
+        run: npx tsc --noEmit
+      - name: Unit tests
+        run: npm test
+      - name: Production build
+        run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+
+  ml-api:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ml-api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install CPU torch
+        run: pip install -r requirements-torch.txt
+      - name: Install runtime + dev deps
+        run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Tests
+        run: python -m pytest -q

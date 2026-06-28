@@ -2,8 +2,13 @@ from __future__ import annotations
 
 import secrets
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
+
+
+# Abandoned analyses (user never confirmed) are purged opportunistically so the
+# table cannot grow unbounded without an external scheduler.
+PENDING_ANALYSIS_TTL = timedelta(hours=24)
 
 
 @dataclass(frozen=True)
@@ -25,6 +30,7 @@ class PawDexRepository(Protocol):
         place_id: str,
         species: str,
         embedding: Any,
+        model_version: str,
         limit: int = 3,
     ) -> list[MatchCandidate]: ...
 
@@ -47,6 +53,7 @@ class PawDexRepository(Protocol):
         photo_url: str,
         zone_label: str = "Area comum",
         match_confidence: float | None = None,
+        created_by: str | None = None,
     ) -> dict[str, Any]: ...
 
     def confirm_new_animal(
@@ -57,7 +64,51 @@ class PawDexRepository(Protocol):
         species: str,
         photo_url: str,
         zone_label: str = "Area comum",
+        created_by: str | None = None,
     ) -> dict[str, Any]: ...
+
+    def upsert_user(
+        self,
+        email: str,
+        name: str | None = None,
+    ) -> dict[str, Any]: ...
+
+    def create_place(
+        self,
+        *,
+        name: str,
+        type: str,
+        privacy_level: str,
+        created_by: str,
+        album_total_slots: int = 12,
+        photo_url: str | None = None,
+        geofence: dict[str, Any] | None = None,
+    ) -> dict[str, Any]: ...
+
+    def list_places_for_user(self, user_id: str) -> list[dict[str, Any]]: ...
+
+    def get_place_privacy(self, place_id: str) -> str | None: ...
+
+    def get_membership(
+        self,
+        place_id: str,
+        user_id: str,
+    ) -> dict[str, Any] | None: ...
+
+    def get_place_by_invite_code(self, code: str) -> dict[str, Any] | None: ...
+
+    def get_place_geofence(self, place_id: str) -> dict[str, Any] | None: ...
+
+    def join_place(self, place_id: str, user_id: str, status: str) -> dict[str, Any]: ...
+
+    def list_members(self, place_id: str) -> list[dict[str, Any]]: ...
+
+    def set_member_status(
+        self,
+        place_id: str,
+        user_id: str,
+        status: str,
+    ) -> None: ...
 
 
 def similarity_from_distance(distance: float) -> float:
@@ -80,6 +131,17 @@ def row_to_place(row: dict[str, Any]) -> dict[str, Any]:
         "type": row["type"],
         "privacyLevel": row["privacy_level"],
         "albumTotalSlots": row["album_total_slots"],
+        "photoUrl": row.get("photo_url"),
+        "inviteCode": row.get("invite_code"),
+    }
+
+
+def row_to_user(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(row["id"]),
+        "email": row["email"],
+        "name": row["name"],
+        "avatarUrl": row["avatar_url"],
     }
 
 
@@ -120,6 +182,195 @@ class PostgresPawDexRepository:
         with self.pool.connection() as connection:
             connection.execute("SELECT 1").fetchone()
 
+    def upsert_user(self, email: str, name: str | None = None) -> dict[str, Any]:
+        sql = """
+            INSERT INTO users (email, name)
+            VALUES (%s, %s)
+            ON CONFLICT (email)
+            DO UPDATE SET name = COALESCE(EXCLUDED.name, users.name)
+            RETURNING id, email, name, avatar_url
+        """
+        with self.pool.connection() as connection:
+            row = connection.execute(sql, (email, name)).fetchone()
+        if row is None:
+            raise RuntimeError("User upsert did not return a row.")
+        return row_to_user(row)
+
+    def create_place(
+        self,
+        *,
+        name: str,
+        type: str,
+        privacy_level: str,
+        created_by: str,
+        album_total_slots: int = 12,
+        photo_url: str | None = None,
+        geofence: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        place_id = _new_id("place")
+        geo = geofence or {}
+        with self.pool.connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO places (
+                  id, name, type, privacy_level, album_total_slots,
+                  photo_url, geofence_lat, geofence_lng, geofence_radius_m
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    place_id,
+                    name,
+                    type,
+                    privacy_level,
+                    album_total_slots,
+                    photo_url,
+                    geo.get("lat"),
+                    geo.get("lng"),
+                    geo.get("radiusM"),
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO place_members (place_id, user_id, role, status)
+                VALUES (%s, %s, 'admin', 'approved')
+                """,
+                (place_id, created_by),
+            )
+            place = connection.execute(
+                "SELECT * FROM places WHERE id = %s",
+                (place_id,),
+            ).fetchone()
+
+        if place is None:
+            raise RuntimeError("Place creation did not return a row.")
+        return row_to_place(place)
+
+    def list_places_for_user(self, user_id: str) -> list[dict[str, Any]]:
+        sql = """
+            SELECT p.*, pm.role
+            FROM places p
+            JOIN place_members pm
+              ON pm.place_id = p.id
+            WHERE pm.user_id = %s
+              AND pm.status = 'approved'
+            ORDER BY p.created_at ASC
+        """
+        with self.pool.connection() as connection:
+            rows = connection.execute(sql, (user_id,)).fetchall()
+        return [{**row_to_place(row), "role": row["role"]} for row in rows]
+
+    def get_place_privacy(self, place_id: str) -> str | None:
+        with self.pool.connection() as connection:
+            row = connection.execute(
+                "SELECT privacy_level FROM places WHERE id = %s",
+                (place_id,),
+            ).fetchone()
+        return row["privacy_level"] if row else None
+
+    def get_membership(
+        self,
+        place_id: str,
+        user_id: str,
+    ) -> dict[str, Any] | None:
+        with self.pool.connection() as connection:
+            row = connection.execute(
+                """
+                SELECT role, status
+                FROM place_members
+                WHERE place_id = %s
+                  AND user_id = %s
+                """,
+                (place_id, user_id),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def get_place_by_invite_code(self, code: str) -> dict[str, Any] | None:
+        with self.pool.connection() as connection:
+            row = connection.execute(
+                "SELECT id, name FROM places WHERE invite_code = %s",
+                (code,),
+            ).fetchone()
+        return {"id": row["id"], "name": row["name"]} if row else None
+
+    def get_place_geofence(self, place_id: str) -> dict[str, Any] | None:
+        with self.pool.connection() as connection:
+            row = connection.execute(
+                """
+                SELECT geofence_lat, geofence_lng, geofence_radius_m
+                FROM places
+                WHERE id = %s
+                """,
+                (place_id,),
+            ).fetchone()
+        if (
+            row is None
+            or row["geofence_lat"] is None
+            or row["geofence_lng"] is None
+            or row["geofence_radius_m"] is None
+        ):
+            return None
+        return {
+            "lat": float(row["geofence_lat"]),
+            "lng": float(row["geofence_lng"]),
+            "radiusM": float(row["geofence_radius_m"]),
+        }
+
+    def join_place(self, place_id: str, user_id: str, status: str) -> dict[str, Any]:
+        sql = """
+            INSERT INTO place_members (place_id, user_id, role, status)
+            VALUES (%s, %s, 'member', %s)
+            ON CONFLICT (place_id, user_id)
+            DO UPDATE SET status = CASE
+                WHEN place_members.status = 'approved' THEN 'approved'
+                ELSE EXCLUDED.status
+            END
+            RETURNING role, status
+        """
+        with self.pool.connection() as connection:
+            row = connection.execute(sql, (place_id, user_id, status)).fetchone()
+        if row is None:
+            raise RuntimeError("Join did not return a membership.")
+        return {"role": row["role"], "status": row["status"]}
+
+    def list_members(self, place_id: str) -> list[dict[str, Any]]:
+        sql = """
+            SELECT pm.user_id, pm.role, pm.status, u.email, u.name
+            FROM place_members pm
+            JOIN users u ON u.id = pm.user_id
+            WHERE pm.place_id = %s
+            ORDER BY pm.created_at ASC
+        """
+        with self.pool.connection() as connection:
+            rows = connection.execute(sql, (place_id,)).fetchall()
+        return [
+            {
+                "userId": str(row["user_id"]),
+                "role": row["role"],
+                "status": row["status"],
+                "email": row["email"],
+                "name": row["name"],
+            }
+            for row in rows
+        ]
+
+    def set_member_status(
+        self,
+        place_id: str,
+        user_id: str,
+        status: str,
+    ) -> None:
+        with self.pool.connection() as connection:
+            connection.execute(
+                """
+                UPDATE place_members
+                SET status = %s
+                WHERE place_id = %s
+                  AND user_id = %s
+                """,
+                (status, place_id, user_id),
+            )
+
     def get_place_state(self, place_id: str) -> dict[str, Any]:
         with self.pool.connection() as connection:
             place = connection.execute(
@@ -139,7 +390,7 @@ class PostgresPawDexRepository:
             return {"places": [], "animals": [], "sightings": [], "albumSlots": []}
 
         animal_ids = [row["id"] for row in animals]
-        total_slots = int(place["album_total_slots"])
+        total_slots = max(int(place["album_total_slots"]), len(animal_ids))
         album_slots = [
             {
                 "slotNumber": index + 1,
@@ -162,6 +413,7 @@ class PostgresPawDexRepository:
         place_id: str,
         species: str,
         embedding: Any,
+        model_version: str,
         limit: int = 3,
     ) -> list[MatchCandidate]:
         sql = """
@@ -177,6 +429,7 @@ class PostgresPawDexRepository:
              AND a.place_id = ae.place_id
             WHERE ae.place_id = %s
               AND a.species = %s
+              AND ae.model_version = %s
             GROUP BY ae.animal_id, a.display_name, a.species, a.primary_photo_url
             ORDER BY distance ASC
             LIMIT %s
@@ -184,7 +437,7 @@ class PostgresPawDexRepository:
         with self.pool.connection() as connection:
             rows = connection.execute(
                 sql,
-                (embedding, place_id, species, limit),
+                (embedding, place_id, species, model_version, limit),
             ).fetchall()
 
         return [
@@ -217,6 +470,10 @@ class PostgresPawDexRepository:
             RETURNING id
         """
         with self.pool.connection() as connection:
+            connection.execute(
+                "DELETE FROM pending_sighting_analyses WHERE created_at < %s",
+                (datetime.now(timezone.utc) - PENDING_ANALYSIS_TTL,),
+            )
             row = connection.execute(
                 sql,
                 (
@@ -242,6 +499,7 @@ class PostgresPawDexRepository:
         photo_url: str,
         zone_label: str = "Area comum",
         match_confidence: float | None = None,
+        created_by: str | None = None,
     ) -> dict[str, Any]:
         with self.pool.connection() as connection:
             pending = self._fetch_pending_analysis(connection, analysis_id, place_id)
@@ -261,6 +519,7 @@ class PostgresPawDexRepository:
                 taken_at=now,
                 detector_confidence=pending["detector_confidence"],
                 match_confidence=match_confidence,
+                created_by=created_by,
             )
             self._insert_animal_embedding(
                 connection=connection,
@@ -295,6 +554,7 @@ class PostgresPawDexRepository:
         species: str,
         photo_url: str,
         zone_label: str = "Area comum",
+        created_by: str | None = None,
     ) -> dict[str, Any]:
         with self.pool.connection() as connection:
             pending = self._fetch_pending_analysis(connection, analysis_id, place_id)
@@ -310,9 +570,9 @@ class PostgresPawDexRepository:
                 INSERT INTO animals (
                   id, place_id, species, display_name, status, description,
                   color_tags, rarity_label, primary_photo_url, first_seen_at,
-                  last_seen_at
+                  last_seen_at, created_by
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     animal_id,
@@ -326,6 +586,7 @@ class PostgresPawDexRepository:
                     photo_url,
                     now,
                     now,
+                    created_by,
                 ),
             )
             self._insert_sighting(
@@ -339,6 +600,7 @@ class PostgresPawDexRepository:
                 taken_at=now,
                 detector_confidence=pending["detector_confidence"],
                 match_confidence=None,
+                created_by=created_by,
             )
             self._insert_animal_embedding(
                 connection=connection,
@@ -420,14 +682,15 @@ class PostgresPawDexRepository:
         taken_at: datetime,
         detector_confidence: float,
         match_confidence: float | None,
+        created_by: str | None = None,
     ) -> None:
         connection.execute(
             """
             INSERT INTO sightings (
               id, place_id, animal_id, photo_url, species, zone_label, taken_at,
-              detector_confidence, match_confidence, review_status
+              detector_confidence, match_confidence, review_status, created_by
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 sighting_id,
@@ -440,6 +703,7 @@ class PostgresPawDexRepository:
                 detector_confidence,
                 match_confidence,
                 "confirmed",
+                created_by,
             ),
         )
 

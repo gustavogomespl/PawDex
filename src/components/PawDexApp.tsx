@@ -8,14 +8,20 @@ import { PlaceHeader } from "./PlaceHeader";
 import { SightingComposer } from "./SightingComposer";
 import { StickerAlbumGrid } from "./StickerAlbumGrid";
 
-export function PawDexApp() {
+type PawDexAppProps = {
+  placeId: string;
+};
+
+export function PawDexApp({ placeId }: PawDexAppProps) {
   const [isComposing, setIsComposing] = useState(false);
-  const store = usePawDexStore();
+  const store = usePawDexStore(placeId);
 
   if (store.isLoadingInitialState) {
     return (
       <main className="app-shell">
-        <p>Carregando PawDex...</p>
+        <p role="status" aria-live="polite">
+          Carregando PawDex...
+        </p>
       </main>
     );
   }
@@ -40,9 +46,15 @@ export function PawDexApp() {
       />
 
       {store.warning ? (
-        <p className="notice notice--warning">{store.warning}</p>
+        <p className="notice notice--warning" role="alert">
+          {store.warning}
+        </p>
       ) : null}
-      {store.notice ? <p className="notice">{store.notice}</p> : null}
+      {store.notice ? (
+        <p className="notice" role="status" aria-live="polite">
+          {store.notice}
+        </p>
+      ) : null}
 
       {isComposing ? (
         <SightingComposer

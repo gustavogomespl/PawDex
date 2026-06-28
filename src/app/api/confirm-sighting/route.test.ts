@@ -2,6 +2,11 @@
  * @vitest-environment node
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("@/auth", () => ({
+  auth: vi.fn(async () => ({ user: { id: "user-1" } })),
+}));
+
 import { POST } from "./route";
 
 const emptyState = {
@@ -69,7 +74,7 @@ describe("POST /api/confirm-sighting", () => {
       expect.objectContaining({
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ ...payload, userId: "user-1" }),
       }),
     );
   });

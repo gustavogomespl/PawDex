@@ -7,6 +7,21 @@ type AnimalTimelineProps = {
   sightings: Sighting[];
 };
 
+function formatAnimalStatus(status: Animal["status"]): string {
+  switch (status) {
+    case "has-owner":
+      return "Tem tutor";
+    case "community":
+      return "Comunitario";
+    case "lost":
+      return "Perdido";
+    case "needs-help":
+      return "Precisa de ajuda";
+    default:
+      return "Desconhecido";
+  }
+}
+
 export function AnimalTimeline({ animal, sightings }: AnimalTimelineProps) {
   if (!animal) {
     return (
@@ -22,7 +37,7 @@ export function AnimalTimeline({ animal, sightings }: AnimalTimelineProps) {
       <img className="detail-panel__photo" src={animal.primaryPhotoUrl} alt="" />
       <div className="detail-panel__heading">
         <h2>{animal.displayName}</h2>
-        <span>{animal.status}</span>
+        <span>{formatAnimalStatus(animal.status)}</span>
       </div>
       <p>{animal.description}</p>
       <div className="tag-row">

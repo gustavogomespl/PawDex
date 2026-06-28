@@ -1,5 +1,5 @@
-import { PawDexApp } from "@/components/PawDexApp";
+import { redirect } from "next/navigation";
 
 export default function Page() {
-  return <PawDexApp />;
+  redirect("/places");
 }

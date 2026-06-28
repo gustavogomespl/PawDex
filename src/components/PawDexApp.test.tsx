@@ -156,7 +156,7 @@ describe("PawDexApp", () => {
       jsonResponse(await remoteStateLoad.promise),
     );
 
-    render(<PawDexApp />);
+    render(<PawDexApp placeId={activePlaceId} />);
 
     expect(screen.getByText("Carregando PawDex...")).toBeInTheDocument();
     expect(
@@ -204,7 +204,7 @@ describe("PawDexApp", () => {
     };
     window.localStorage.setItem(PAWDEX_STORAGE_KEY, JSON.stringify(savedState));
 
-    render(<PawDexApp />);
+    render(<PawDexApp placeId={activePlaceId} />);
 
     expect((await screen.findAllByText("Saved Nina")).length).toBeGreaterThan(0);
     expect(screen.getByText("8/12 encontrados")).toBeInTheDocument();
@@ -213,6 +213,18 @@ describe("PawDexApp", () => {
         /Nao foi possivel carregar a PawDex remota\. Usando dados locais\./i,
       ),
     ).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(/Usando dados locais/i);
+  });
+
+  it("does not cache remote state in local storage", async () => {
+    const router = createFetchRouter();
+    stubStateLoad(router, demoState);
+
+    render(<PawDexApp placeId={activePlaceId} />);
+
+    await screen.findByRole("heading", { name: "Escritorio Centro" });
+
+    expect(window.localStorage.getItem(PAWDEX_STORAGE_KEY)).toBeNull();
   });
 
   it("applies confirmed sighting state returned by the API", async () => {
@@ -250,7 +262,7 @@ describe("PawDexApp", () => {
         selectedAnimalId: "animal-mingau",
       });
     });
-    render(<PawDexApp />);
+    render(<PawDexApp placeId={activePlaceId} />);
 
     await screen.findByRole("heading", { name: "Escritorio Centro" });
     await user.click(
@@ -310,7 +322,7 @@ describe("PawDexApp", () => {
         selectedAnimalId: "animal-nina",
       });
     });
-    render(<PawDexApp />);
+    render(<PawDexApp placeId={activePlaceId} />);
 
     await screen.findByRole("heading", { name: "Escritorio Centro" });
     await user.click(
@@ -373,7 +385,7 @@ describe("PawDexApp", () => {
         false,
       ),
     );
-    render(<PawDexApp />);
+    render(<PawDexApp placeId={activePlaceId} />);
 
     await screen.findByRole("heading", { name: "Escritorio Centro" });
     await user.click(

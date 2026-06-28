@@ -71,6 +71,21 @@ describe("POST /api/detect", () => {
     });
   });
 
+  it("returns 400 when the form data cannot be parsed", async () => {
+    const request = {
+      formData: vi.fn().mockRejectedValue(new Error("malformed")),
+    } as unknown as Request;
+
+    const response = await POST(request);
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      detections: [],
+      bestDetection: null,
+      error: "Requisicao invalida.",
+    });
+  });
+
   it("returns 502 when the ML API is unavailable", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     const formData = new FormData();

@@ -2,6 +2,11 @@
  * @vitest-environment node
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("@/auth", () => ({
+  auth: vi.fn(async () => ({ user: { id: "user-1" } })),
+}));
+
 import { POST } from "./route";
 
 const successBody = {
@@ -119,6 +124,17 @@ describe("POST /api/analyze-sighting", () => {
 
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual(emptyAnalyzeBody("Local obrigatorio."));
+  });
+
+  it("returns 400 when the form data cannot be parsed", async () => {
+    const request = {
+      formData: vi.fn().mockRejectedValue(new Error("malformed")),
+    } as unknown as Request;
+
+    const response = await POST(request);
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual(emptyAnalyzeBody("Requisicao invalida."));
   });
 
   it("returns 502 when the ML API is unavailable", async () => {

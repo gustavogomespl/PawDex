@@ -48,6 +48,8 @@ class RecordingConnection:
         animals: list[dict[str, Any]] | None = None,
         sightings: list[dict[str, Any]] | None = None,
         match_rows: list[dict[str, Any]] | None = None,
+        user_row: dict[str, Any] | None = None,
+        member_place_rows: list[dict[str, Any]] | None = None,
     ):
         self.pending_analysis = pending_analysis
         self.pending_insert_id = pending_insert_id
@@ -55,6 +57,8 @@ class RecordingConnection:
         self.animals = animals or []
         self.sightings = sightings or []
         self.match_rows = match_rows or []
+        self.user_row = user_row
+        self.member_place_rows = member_place_rows or []
         self.queries: list[RecordedQuery] = []
 
     def __enter__(self) -> RecordingConnection:
@@ -89,6 +93,10 @@ class RecordingConnection:
         if normalized.startswith("delete from pending_sighting_analyses"):
             self.pending_analysis = None
             return FakeCursor()
+        if normalized.startswith("insert into users"):
+            return FakeCursor(row=self.user_row)
+        if "join place_members" in normalized:
+            return FakeCursor(rows=self.member_place_rows)
         if "from animal_embeddings" in normalized and "join animals" in normalized:
             return FakeCursor(rows=self.match_rows)
         if normalized.startswith("select * from places"):
@@ -218,6 +226,7 @@ def test_find_matches_restricts_vector_search_to_place_and_species():
         place_id="place-office",
         species="cat",
         embedding=embedding,
+        model_version="mobilenet-v3",
         limit=2,
     )
 
@@ -225,9 +234,76 @@ def test_find_matches_restricts_vector_search_to_place_and_species():
     assert "ae.embedding <=> %s" in query.sql
     assert "ae.place_id = %s" in query.sql
     assert "a.species = %s" in query.sql
-    assert query.params == (embedding, "place-office", "cat", 2)
+    assert "ae.model_version = %s" in query.sql
+    assert query.params == (embedding, "place-office", "cat", "mobilenet-v3", 2)
     assert matches[0].animal_id == "animal-mingau"
     assert matches[0].score == 0.8
+
+
+def test_upsert_user_inserts_or_updates_by_email_and_maps_result():
+    connection = RecordingConnection(
+        user_row={
+            "id": "11111111-1111-1111-1111-111111111111",
+            "email": "tutor@example.com",
+            "name": "Tutor",
+            "avatar_url": None,
+        }
+    )
+    repository = PostgresPawDexRepository(RecordingPool(connection))
+
+    user = repository.upsert_user(email="tutor@example.com", name="Tutor")
+
+    insert = only_query_containing(connection, "insert into users")
+    assert "on conflict (email)" in insert.sql.lower()
+    assert "returning" in insert.sql.lower()
+    assert insert.params == ("tutor@example.com", "Tutor")
+    assert user == {
+        "id": "11111111-1111-1111-1111-111111111111",
+        "email": "tutor@example.com",
+        "name": "Tutor",
+        "avatarUrl": None,
+    }
+
+
+def test_create_place_inserts_place_and_admin_membership():
+    connection = RecordingConnection(place=place_row())
+    repository = PostgresPawDexRepository(RecordingPool(connection))
+
+    repository.create_place(
+        name="Escritorio Vila",
+        type="office",
+        privacy_level="invite-only",
+        created_by="11111111-1111-1111-1111-111111111111",
+        album_total_slots=10,
+        photo_url="https://example.com/place.jpg",
+    )
+
+    place_insert = only_query_containing(connection, "insert into places")
+    member_insert = only_query_containing(connection, "insert into place_members")
+    place_id = place_insert.params[0]
+    assert place_id.startswith("place-")
+    assert "Escritorio Vila" in place_insert.params
+    assert "invite-only" in place_insert.params
+    assert "'admin'" in member_insert.sql.lower()
+    assert "'approved'" in member_insert.sql.lower()
+    assert member_insert.params == (place_id, "11111111-1111-1111-1111-111111111111")
+
+
+def test_list_places_for_user_returns_approved_member_places_with_role():
+    connection = RecordingConnection(
+        member_place_rows=[{**place_row(), "role": "admin"}]
+    )
+    repository = PostgresPawDexRepository(RecordingPool(connection))
+
+    places = repository.list_places_for_user("user-1")
+
+    query = only_query_containing(connection, "join place_members")
+    assert "pm.user_id = %s" in query.sql
+    assert "status = 'approved'" in query.sql.lower()
+    assert query.params == ("user-1",)
+    assert places[0]["id"] == "place-office"
+    assert places[0]["role"] == "admin"
+    assert places[0]["privacyLevel"] == "invite-only"
 
 
 def test_get_place_state_returns_frontend_state_and_album_slots():
@@ -265,6 +341,28 @@ def test_get_place_state_returns_frontend_state_and_album_slots():
     ]
 
 
+def test_get_place_state_expands_album_slots_when_animals_exceed_configured_total():
+    animals = [
+        animal_row(id=f"animal-{index:02d}", display_name=f"Animal {index}")
+        for index in range(1, 14)
+    ]
+    connection = RecordingConnection(
+        place=place_row(album_total_slots=12),
+        animals=animals,
+    )
+    repository = PostgresPawDexRepository(RecordingPool(connection))
+
+    state = repository.get_place_state("place-office")
+
+    assert len(state["albumSlots"]) == 13
+    assert state["albumSlots"][-1] == {
+        "slotNumber": 13,
+        "placeId": "place-office",
+        "animalId": "animal-13",
+        "isDiscovered": True,
+    }
+
+
 def test_create_pending_analysis_inserts_parameterized_row_and_returns_id():
     embedding = [0.1, 0.2, 0.3]
     connection = RecordingConnection(pending_insert_id="analysis-123")
@@ -287,6 +385,25 @@ def test_create_pending_analysis_inserts_parameterized_row_and_returns_id():
     assert values["species"] == "cat"
     assert values["embedding"] is embedding
     assert "%s" in insert.sql
+
+
+def test_create_pending_analysis_purges_stale_rows_before_insert():
+    connection = RecordingConnection(pending_insert_id="analysis-123")
+    repository = PostgresPawDexRepository(RecordingPool(connection))
+
+    repository.create_pending_analysis(
+        place_id="place-office",
+        species="cat",
+        detector_confidence=0.91,
+        detection_box={"x1": 1, "y1": 2, "x2": 10, "y2": 12},
+        model_version="mobilenet-v3",
+        embedding=[0.1, 0.2, 0.3],
+        quality_score=0.82,
+    )
+
+    purge = only_query_containing(connection, "delete from pending_sighting_analyses")
+    assert "created_at < %s" in purge.sql
+    assert purge.params is not None and len(purge.params) == 1
 
 
 def test_confirm_existing_animal_inserts_embedding_for_confirmed_sighting_animal():
