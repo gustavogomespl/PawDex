@@ -8,6 +8,7 @@ export default auth((req) => {
 });
 
 export const config = {
-  // Protect the place area; /api/* routes enforce the session themselves.
-  matcher: ["/places", "/places/:path*"],
+  // Protect the place + account areas; /api/* routes enforce the session
+  // themselves and /signin, /join, /terms stay public.
+  matcher: ["/places", "/places/:path*", "/account"],
 };

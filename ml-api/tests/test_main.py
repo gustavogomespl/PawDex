@@ -47,6 +47,8 @@ class FakeRepository:
         ]
         self.join_calls = []
         self.member_status_calls = []
+        self.delete_content_calls = []
+        self.audit_calls = []
 
     def healthcheck(self) -> None:
         self.healthcheck_calls += 1
@@ -72,6 +74,13 @@ class FakeRepository:
 
     def set_member_status(self, place_id: str, user_id: str, status: str):
         self.member_status_calls.append((place_id, user_id, status))
+
+    def delete_content_by_user(self, user_id: str):
+        self.delete_content_calls.append(user_id)
+        return {"animalsDeleted": 2, "sightingsDeleted": 3}
+
+    def record_audit(self, user_id, action, target_type=None, target_id=None, metadata=None):
+        self.audit_calls.append((user_id, action, metadata))
 
     def upsert_user(self, email: str, name: Optional[str] = None) -> dict[str, object]:
         self.upsert_calls.append({"email": email, "name": name})
@@ -823,6 +832,19 @@ def test_update_member_status_approves_as_admin():
 
     assert response.status_code == 200
     assert repository.member_status_calls == [("place-1", "user-2", "approved")]
+
+
+def test_delete_user_content_removes_and_audits():
+    repository = FakeRepository()
+    client = TestClient(_app_with(repository))
+
+    response = client.delete("/users/user-1/content")
+
+    assert response.status_code == 200
+    assert response.json() == {"animalsDeleted": 2, "sightingsDeleted": 3}
+    assert repository.delete_content_calls == ["user-1"]
+    assert repository.audit_calls[0][0] == "user-1"
+    assert repository.audit_calls[0][1] == "remove_own_content"
 
 
 def test_blocking_endpoints_run_in_threadpool_not_event_loop():

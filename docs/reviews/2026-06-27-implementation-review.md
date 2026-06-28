@@ -130,12 +130,15 @@ Corrigir os defeitos confirmados de maior raio de impacto:
 - **Ciclo de vida do lugar:** `/places` ("meus lugares"), form de criar lugar (`POST /places`, adicionar `photo_url`, geofence lat/lng/radius).
 - **Fluxos de entrada:** convite (token assinado), QR (lib qrcode → página de join), aprovação admin, proximidade GPS (Geolocation API).
 
-### Fase D — Privacidade-by-design & direitos LGPD
-- **Guardar só o recorte** (o ml-api já calcula `crop_to_box` e descarta) no object storage; nunca a foto inteira; remover EXIF.
+### Fase D — Privacidade-by-design & direitos LGPD — 🟡 **EM ANDAMENTO**
+> ✅ **D-onda-1 (direitos do titular) — 2026-06-27.** Migração `0005` (`audit_log` append-only); `repository.delete_content_by_user` (apaga animais+avistamentos do usuário via `created_by`; cascata leva embeddings/sightings) + `record_audit`; endpoint `DELETE /users/{id}/content` (registra auditoria); rota `DELETE /api/account/content` (sessão); página `/account` ("Remover meu conteúdo" com confirmação) + `/terms` (Política/Termos LGPD); `/account` protegido no middleware. Verificado: pytest 105, vitest 69, tsc, next build, **pg real** (erasure zera o conteúdo do usuário + grava no audit_log). *Como as fotos ainda são base64 na linha, apagar a linha já remove a foto — o purge no object storage entra na D-onda-2.*
+
+Itens restantes da Fase D (próximas ondas):
+- **Guardar só o recorte** (o ml-api já calcula `crop_to_box` e descarta) no object storage (MinIO); nunca a foto inteira; remover EXIF. *(Inclui o object storage adiado da Fase B.)*
 - **Blur de rostos/placas** server-side antes de persistir.
 - **Servir imagens por rota autorizada** (não dentro do JSON de estado).
-- **Direitos do titular:** "remover meu conteúdo" (apaga linha + crop no storage), delete admin, export do lugar, captura de consentimento + base legal, `audit_log`, Política de Privacidade + Termos.
-- **Headers/runtime:** `USER` não-root nos Dockerfiles; CSP (img-src limitado ao storage) + HSTS via `next.config.mjs`; rate limiting na frente da inferência.
+- **Direitos do titular (resto):** delete admin, export do lugar, captura de consentimento + base legal. *(erasure + audit_log + Termos já feitos.)*
+- **Headers/runtime:** CSP (img-src limitado ao storage) + rate limiting na frente da inferência. *(non-root nos Dockerfiles já feito na Fase B.)*
 
 ### Fase E — Fechar o loop social
 - **Persistir sugestões + decisões** em `match_suggestions` (hoje morta) e usar `review_status='needs-review'`; adicionar opção **"não sei"** (hoje só existente/novo).

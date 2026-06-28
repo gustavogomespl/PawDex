@@ -16,9 +16,12 @@ export default async function PlacesPage() {
     <main className="app-shell">
       <header className="places-header">
         <h1>Meus lugares</h1>
-        <Link className="primary-action" href="/places/new">
-          Criar lugar
-        </Link>
+        <span>
+          <Link href="/account">Minha conta</Link>{" "}
+          <Link className="primary-action" href="/places/new">
+            Criar lugar
+          </Link>
+        </span>
       </header>
 
       {places.length === 0 ? (

@@ -79,3 +79,10 @@ def test_invite_code_migration_chains_and_adds_column():
     assert 'revision = "0004_place_invite_code"' in sql
     assert 'down_revision = "0003_place_profile"' in sql
     assert "invite_code" in sql.lower()
+
+
+def test_audit_log_migration_chains_and_creates_table():
+    sql = _read_migration("0005_audit_log.py")
+    assert 'revision = "0005_audit_log"' in sql
+    assert 'down_revision = "0004_place_invite_code"' in sql
+    assert "create table if not exists audit_log" in sql.lower()

@@ -110,6 +110,17 @@ class PawDexRepository(Protocol):
         status: str,
     ) -> None: ...
 
+    def delete_content_by_user(self, user_id: str) -> dict[str, Any]: ...
+
+    def record_audit(
+        self,
+        user_id: str | None,
+        action: str,
+        target_type: str | None = None,
+        target_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None: ...
+
 
 def similarity_from_distance(distance: float) -> float:
     return round(max(0.0, min(1.0, 1.0 - distance)), 4)
@@ -369,6 +380,48 @@ class PostgresPawDexRepository:
                   AND user_id = %s
                 """,
                 (status, place_id, user_id),
+            )
+
+    def delete_content_by_user(self, user_id: str) -> dict[str, Any]:
+        with self.pool.connection() as connection:
+            # Deleting authored animals cascades their sightings/embeddings;
+            # then remove sightings the user authored on other people's animals.
+            animals = connection.execute(
+                "DELETE FROM animals WHERE created_by = %s",
+                (user_id,),
+            ).rowcount
+            sightings = connection.execute(
+                "DELETE FROM sightings WHERE created_by = %s",
+                (user_id,),
+            ).rowcount
+        return {
+            "animalsDeleted": int(animals or 0),
+            "sightingsDeleted": int(sightings or 0),
+        }
+
+    def record_audit(
+        self,
+        user_id: str | None,
+        action: str,
+        target_type: str | None = None,
+        target_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        with self.pool.connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO audit_log (
+                  user_id, action, target_type, target_id, metadata
+                )
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (
+                    user_id,
+                    action,
+                    target_type,
+                    target_id,
+                    _jsonb(metadata) if metadata is not None else None,
+                ),
             )
 
     def get_place_state(self, place_id: str) -> dict[str, Any]:

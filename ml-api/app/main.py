@@ -303,6 +303,16 @@ def create_app(
     def list_user_places(user_id: str) -> dict[str, object]:
         return {"places": get_repository().list_places_for_user(user_id)}
 
+    @app.delete(
+        "/users/{user_id}/content",
+        dependencies=[Depends(require_internal_token)],
+    )
+    def delete_user_content(user_id: str) -> dict[str, object]:
+        repository = get_repository()
+        result = repository.delete_content_by_user(user_id)
+        repository.record_audit(user_id, "remove_own_content", metadata=result)
+        return result
+
     @app.get("/invites/{code}", dependencies=[Depends(require_internal_token)])
     def resolve_invite(code: str) -> dict[str, object]:
         place = get_repository().get_place_by_invite_code(code)
