@@ -9,6 +9,7 @@ export type PlaceSummary = {
   privacyLevel: string;
   albumTotalSlots: number;
   photoUrl: string | null;
+  inviteCode: string | null;
   role: string;
 };
 

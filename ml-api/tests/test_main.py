@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from app.detection import BoundingBox, DetectionResponse, PetDetection
-from app.main import create_app, is_place_access_allowed
+from app.main import create_app, is_place_access_allowed, is_within_geofence
 
 
 class FakeDetector:
@@ -33,6 +33,20 @@ class FakeRepository:
         # allowed unless a test overrides them to exercise 403s.
         self.place_privacy = "public"
         self.membership = {"role": "admin", "status": "approved"}
+        # C5 join-flow defaults
+        self.invite_place = {"id": "place-1", "name": "Escritorio"}
+        self.geofence = None
+        self.members = [
+            {
+                "userId": "user-2",
+                "role": "member",
+                "status": "pending",
+                "email": "novo@x.com",
+                "name": None,
+            }
+        ]
+        self.join_calls = []
+        self.member_status_calls = []
 
     def healthcheck(self) -> None:
         self.healthcheck_calls += 1
@@ -42,6 +56,22 @@ class FakeRepository:
 
     def get_membership(self, place_id: str, user_id: str):
         return self.membership
+
+    def get_place_by_invite_code(self, code: str):
+        return self.invite_place
+
+    def get_place_geofence(self, place_id: str):
+        return self.geofence
+
+    def join_place(self, place_id: str, user_id: str, status: str):
+        self.join_calls.append((place_id, user_id, status))
+        return {"role": "member", "status": status}
+
+    def list_members(self, place_id: str):
+        return self.members
+
+    def set_member_status(self, place_id: str, user_id: str, status: str):
+        self.member_status_calls.append((place_id, user_id, status))
 
     def upsert_user(self, email: str, name: Optional[str] = None) -> dict[str, object]:
         self.upsert_calls.append({"email": email, "name": name})
@@ -659,6 +689,140 @@ def test_internal_token_required_when_configured(monkeypatch):
         headers={"X-Internal-Token": "s3cret"},
     )
     assert allowed.status_code == 200
+
+
+def test_is_within_geofence():
+    geofence = {"lat": 0.0, "lng": 0.0, "radiusM": 1000.0}
+    assert is_within_geofence(geofence, 0.0005, 0.0005) is True
+    assert is_within_geofence(geofence, 1.0, 1.0) is False
+
+
+def _app_with(repository):
+    return create_app(
+        detector_factory=lambda: FakeDetector(DetectionResponse([], None)),
+        repository_factory=lambda: repository,
+    )
+
+
+def test_resolve_invite_returns_place():
+    repository = FakeRepository()
+    repository.invite_place = {"id": "place-1", "name": "Escritorio"}
+    client = TestClient(_app_with(repository))
+
+    response = client.get("/invites/abc123")
+
+    assert response.status_code == 200
+    assert response.json() == {"placeId": "place-1", "name": "Escritorio"}
+
+
+def test_resolve_invite_404_for_unknown_code():
+    repository = FakeRepository()
+    repository.invite_place = None
+    client = TestClient(_app_with(repository))
+
+    assert client.get("/invites/nope").status_code == 404
+
+
+def test_join_via_invite_code_approves_member():
+    repository = FakeRepository()
+    repository.invite_place = {"id": "place-1", "name": "Escritorio"}
+    client = TestClient(_app_with(repository))
+
+    response = client.post(
+        "/places/place-1/join",
+        json={"userId": "user-2", "method": "invite", "code": "abc123"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "approved"
+    assert repository.join_calls == [("place-1", "user-2", "approved")]
+
+
+def test_join_via_invite_code_rejects_wrong_code():
+    repository = FakeRepository()
+    repository.invite_place = {"id": "other-place", "name": "X"}
+    client = TestClient(_app_with(repository))
+
+    response = client.post(
+        "/places/place-1/join",
+        json={"userId": "user-2", "method": "invite", "code": "wrong"},
+    )
+
+    assert response.status_code == 403
+    assert repository.join_calls == []
+
+
+def test_join_request_is_pending():
+    repository = FakeRepository()
+    client = TestClient(_app_with(repository))
+
+    response = client.post(
+        "/places/place-1/join",
+        json={"userId": "user-2", "method": "request"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "pending"
+    assert repository.join_calls == [("place-1", "user-2", "pending")]
+
+
+def test_join_via_gps_within_radius_approves():
+    repository = FakeRepository()
+    repository.geofence = {"lat": 0.0, "lng": 0.0, "radiusM": 1000.0}
+    client = TestClient(_app_with(repository))
+
+    response = client.post(
+        "/places/place-1/join",
+        json={"userId": "user-2", "method": "gps", "lat": 0.0005, "lng": 0.0005},
+    )
+
+    assert response.status_code == 200
+    assert repository.join_calls == [("place-1", "user-2", "approved")]
+
+
+def test_join_via_gps_outside_radius_forbidden():
+    repository = FakeRepository()
+    repository.geofence = {"lat": 0.0, "lng": 0.0, "radiusM": 1000.0}
+    client = TestClient(_app_with(repository))
+
+    response = client.post(
+        "/places/place-1/join",
+        json={"userId": "user-2", "method": "gps", "lat": 1.0, "lng": 1.0},
+    )
+
+    assert response.status_code == 403
+    assert repository.join_calls == []
+
+
+def test_list_members_requires_admin():
+    repository = FakeRepository()
+    repository.membership = {"role": "member", "status": "approved"}
+    client = TestClient(_app_with(repository))
+
+    assert client.get("/places/place-1/members?user_id=user-2").status_code == 403
+
+
+def test_list_members_returns_members_for_admin():
+    repository = FakeRepository()
+    client = TestClient(_app_with(repository))
+
+    response = client.get("/places/place-1/members?user_id=admin")
+
+    assert response.status_code == 200
+    assert response.json()["members"][0]["status"] == "pending"
+
+
+def test_update_member_status_approves_as_admin():
+    repository = FakeRepository()
+    client = TestClient(_app_with(repository))
+
+    response = client.post(
+        "/places/place-1/members/user-2",
+        json={"userId": "admin", "status": "approved"},
+    )
+
+    assert response.status_code == 200
+    assert repository.member_status_calls == [("place-1", "user-2", "approved")]
 
 
 def test_blocking_endpoints_run_in_threadpool_not_event_loop():

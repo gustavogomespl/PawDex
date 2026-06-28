@@ -95,6 +95,21 @@ class PawDexRepository(Protocol):
         user_id: str,
     ) -> dict[str, Any] | None: ...
 
+    def get_place_by_invite_code(self, code: str) -> dict[str, Any] | None: ...
+
+    def get_place_geofence(self, place_id: str) -> dict[str, Any] | None: ...
+
+    def join_place(self, place_id: str, user_id: str, status: str) -> dict[str, Any]: ...
+
+    def list_members(self, place_id: str) -> list[dict[str, Any]]: ...
+
+    def set_member_status(
+        self,
+        place_id: str,
+        user_id: str,
+        status: str,
+    ) -> None: ...
+
 
 def similarity_from_distance(distance: float) -> float:
     return round(max(0.0, min(1.0, 1.0 - distance)), 4)
@@ -117,6 +132,7 @@ def row_to_place(row: dict[str, Any]) -> dict[str, Any]:
         "privacyLevel": row["privacy_level"],
         "albumTotalSlots": row["album_total_slots"],
         "photoUrl": row.get("photo_url"),
+        "inviteCode": row.get("invite_code"),
     }
 
 
@@ -268,6 +284,92 @@ class PostgresPawDexRepository:
                 (place_id, user_id),
             ).fetchone()
         return dict(row) if row else None
+
+    def get_place_by_invite_code(self, code: str) -> dict[str, Any] | None:
+        with self.pool.connection() as connection:
+            row = connection.execute(
+                "SELECT id, name FROM places WHERE invite_code = %s",
+                (code,),
+            ).fetchone()
+        return {"id": row["id"], "name": row["name"]} if row else None
+
+    def get_place_geofence(self, place_id: str) -> dict[str, Any] | None:
+        with self.pool.connection() as connection:
+            row = connection.execute(
+                """
+                SELECT geofence_lat, geofence_lng, geofence_radius_m
+                FROM places
+                WHERE id = %s
+                """,
+                (place_id,),
+            ).fetchone()
+        if (
+            row is None
+            or row["geofence_lat"] is None
+            or row["geofence_lng"] is None
+            or row["geofence_radius_m"] is None
+        ):
+            return None
+        return {
+            "lat": float(row["geofence_lat"]),
+            "lng": float(row["geofence_lng"]),
+            "radiusM": float(row["geofence_radius_m"]),
+        }
+
+    def join_place(self, place_id: str, user_id: str, status: str) -> dict[str, Any]:
+        sql = """
+            INSERT INTO place_members (place_id, user_id, role, status)
+            VALUES (%s, %s, 'member', %s)
+            ON CONFLICT (place_id, user_id)
+            DO UPDATE SET status = CASE
+                WHEN place_members.status = 'approved' THEN 'approved'
+                ELSE EXCLUDED.status
+            END
+            RETURNING role, status
+        """
+        with self.pool.connection() as connection:
+            row = connection.execute(sql, (place_id, user_id, status)).fetchone()
+        if row is None:
+            raise RuntimeError("Join did not return a membership.")
+        return {"role": row["role"], "status": row["status"]}
+
+    def list_members(self, place_id: str) -> list[dict[str, Any]]:
+        sql = """
+            SELECT pm.user_id, pm.role, pm.status, u.email, u.name
+            FROM place_members pm
+            JOIN users u ON u.id = pm.user_id
+            WHERE pm.place_id = %s
+            ORDER BY pm.created_at ASC
+        """
+        with self.pool.connection() as connection:
+            rows = connection.execute(sql, (place_id,)).fetchall()
+        return [
+            {
+                "userId": str(row["user_id"]),
+                "role": row["role"],
+                "status": row["status"],
+                "email": row["email"],
+                "name": row["name"],
+            }
+            for row in rows
+        ]
+
+    def set_member_status(
+        self,
+        place_id: str,
+        user_id: str,
+        status: str,
+    ) -> None:
+        with self.pool.connection() as connection:
+            connection.execute(
+                """
+                UPDATE place_members
+                SET status = %s
+                WHERE place_id = %s
+                  AND user_id = %s
+                """,
+                (status, place_id, user_id),
+            )
 
     def get_place_state(self, place_id: str) -> dict[str, Any]:
         with self.pool.connection() as connection:

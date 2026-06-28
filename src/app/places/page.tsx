@@ -34,6 +34,9 @@ export default async function PlacesPage() {
               <span>
                 {place.type} · {place.privacyLevel} · {place.role}
               </span>
+              {place.role === "admin" ? (
+                <Link href={`/places/${place.id}/admin`}>Admin</Link>
+              ) : null}
             </li>
           ))}
         </ul>

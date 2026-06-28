@@ -72,3 +72,10 @@ def test_place_profile_migration_chains_and_adds_columns():
     assert "alter table places" in low
     assert "photo_url" in low
     assert "geofence" in low
+
+
+def test_invite_code_migration_chains_and_adds_column():
+    sql = _read_migration("0004_place_invite_code.py")
+    assert 'revision = "0004_place_invite_code"' in sql
+    assert 'down_revision = "0003_place_profile"' in sql
+    assert "invite_code" in sql.lower()

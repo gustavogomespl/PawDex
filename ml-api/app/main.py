@@ -1,3 +1,4 @@
+import math
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import asdict
@@ -42,6 +43,25 @@ def is_place_access_allowed(
     return privacy_level == "public" or is_approved_member
 
 
+def haversine_meters(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    radius = 6_371_000.0
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    d_phi = math.radians(lat2 - lat1)
+    d_lambda = math.radians(lng2 - lng1)
+    a = (
+        math.sin(d_phi / 2) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
+    )
+    return 2 * radius * math.asin(math.sqrt(a))
+
+
+def is_within_geofence(geofence: dict[str, Any], lat: float, lng: float) -> bool:
+    return (
+        haversine_meters(geofence["lat"], geofence["lng"], lat, lng)
+        <= geofence["radiusM"]
+    )
+
+
 def require_internal_token(
     x_internal_token: Optional[str] = Header(default=None, alias="X-Internal-Token"),
 ) -> None:
@@ -77,6 +97,19 @@ class CreatePlaceRequest(BaseModel):
     photo_url: Optional[str] = Field(default=None, alias="photoUrl")
     created_by: str = Field(alias="createdBy")
     geofence: Optional[dict[str, Any]] = None
+
+
+class JoinPlaceRequest(BaseModel):
+    user_id: str = Field(alias="userId")
+    method: Literal["invite", "request", "gps"]
+    code: Optional[str] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+
+
+class MemberStatusRequest(BaseModel):
+    user_id: str = Field(alias="userId")
+    status: Literal["approved", "rejected"]
 
 
 class ConfirmSightingRequest(BaseModel):
@@ -208,6 +241,15 @@ def create_app(
                 status_code=403, detail="Not authorized for this place."
             )
 
+    def authorize_admin(place_id: str, user_id: str) -> None:
+        membership = get_repository().get_membership(place_id, user_id)
+        if not (
+            membership
+            and membership.get("role") == "admin"
+            and membership.get("status") == "approved"
+        ):
+            raise HTTPException(status_code=403, detail="Admin access required.")
+
     @app.get("/health")
     def health() -> dict[str, str]:
         response = {"status": "ok", "model": "configured"}
@@ -260,6 +302,74 @@ def create_app(
     )
     def list_user_places(user_id: str) -> dict[str, object]:
         return {"places": get_repository().list_places_for_user(user_id)}
+
+    @app.get("/invites/{code}", dependencies=[Depends(require_internal_token)])
+    def resolve_invite(code: str) -> dict[str, object]:
+        place = get_repository().get_place_by_invite_code(code)
+        if place is None:
+            raise HTTPException(status_code=404, detail="Invite not found.")
+        return {"placeId": place["id"], "name": place["name"]}
+
+    @app.post(
+        "/places/{place_id}/join",
+        dependencies=[Depends(require_internal_token)],
+    )
+    def join_place(place_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, object]:
+        try:
+            request = JoinPlaceRequest.model_validate(payload)
+        except ValidationError as exc:
+            raise RequestValidationError(exc.errors()) from exc
+
+        repository = get_repository()
+        if repository.get_place_privacy(place_id) is None:
+            raise HTTPException(status_code=404, detail="Place not found.")
+
+        if request.method == "invite":
+            if not request.code:
+                raise HTTPException(status_code=400, detail="code is required.")
+            target = repository.get_place_by_invite_code(request.code)
+            if target is None or target["id"] != place_id:
+                raise HTTPException(status_code=403, detail="Invalid invite code.")
+            status = "approved"
+        elif request.method == "gps":
+            if request.lat is None or request.lng is None:
+                raise HTTPException(status_code=400, detail="lat/lng are required.")
+            geofence = repository.get_place_geofence(place_id)
+            if geofence is None or not is_within_geofence(
+                geofence, request.lat, request.lng
+            ):
+                raise HTTPException(status_code=403, detail="Outside the place area.")
+            status = "approved"
+        else:
+            status = "pending"
+
+        return repository.join_place(place_id, request.user_id, status)
+
+    @app.get(
+        "/places/{place_id}/members",
+        dependencies=[Depends(require_internal_token)],
+    )
+    def list_members(place_id: str, user_id: str) -> dict[str, object]:
+        authorize_admin(place_id, user_id)
+        return {"members": get_repository().list_members(place_id)}
+
+    @app.post(
+        "/places/{place_id}/members/{member_user_id}",
+        dependencies=[Depends(require_internal_token)],
+    )
+    def update_member(
+        place_id: str,
+        member_user_id: str,
+        payload: dict[str, Any] = Body(...),
+    ) -> dict[str, object]:
+        try:
+            request = MemberStatusRequest.model_validate(payload)
+        except ValidationError as exc:
+            raise RequestValidationError(exc.errors()) from exc
+
+        authorize_admin(place_id, request.user_id)
+        get_repository().set_member_status(place_id, member_user_id, request.status)
+        return {"ok": True}
 
     @app.get(
         "/places/{place_id}/state",
