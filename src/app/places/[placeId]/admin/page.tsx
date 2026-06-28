@@ -6,6 +6,7 @@ import { fetchPlacesForUser } from "@/domain/places/server";
 import { InviteCard } from "@/components/InviteCard";
 import { MembersManager, type Member } from "@/components/MembersManager";
 import { AnimalAdminList, type AdminAnimal } from "@/components/AnimalAdminList";
+import { ReportsQueue, type Report } from "@/components/ReportsQueue";
 
 const DEFAULT_ML_API_URL = "http://127.0.0.1:8000";
 
@@ -44,6 +45,14 @@ export default async function PlaceAdminPage({
     ? ((await stateResponse.json()).animals as AdminAnimal[])
     : [];
 
+  const reportsResponse = await fetch(
+    `${mlApiUrl}/places/${encodeURIComponent(placeId)}/reports?user_id=${encodeURIComponent(session.user.id)}`,
+    { cache: "no-store", headers: internalApiHeaders() },
+  );
+  const reports: Report[] = reportsResponse.ok
+    ? ((await reportsResponse.json()).reports as Report[])
+    : [];
+
   return (
     <main className="app-shell">
       <header className="places-header">
@@ -55,6 +64,7 @@ export default async function PlaceAdminPage({
       </header>
       {place.inviteCode ? <InviteCard inviteCode={place.inviteCode} /> : null}
       <MembersManager placeId={placeId} members={members} />
+      <ReportsQueue placeId={placeId} reports={reports} />
       <AnimalAdminList placeId={placeId} animals={animals} />
     </main>
   );

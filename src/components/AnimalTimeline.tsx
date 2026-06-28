@@ -4,6 +4,7 @@ import { mediaSrc } from "@/domain/media";
 import { computeRarity } from "@/domain/pawdex/rarity";
 import type { Animal, Sighting } from "@/domain/pawdex/types";
 import { NameVoting } from "./NameVoting";
+import { ReportButton } from "./ReportButton";
 
 type AnimalTimelineProps = {
   animal: Animal | null;
@@ -83,6 +84,16 @@ export function AnimalTimeline({
         </div>
         {placeId ? (
           <NameVoting key={animal.id} placeId={placeId} animalId={animal.id} />
+        ) : null}
+        {placeId ? (
+          <div className="detail-card__report">
+            <ReportButton
+              key={animal.id}
+              placeId={placeId}
+              targetType="animal"
+              targetId={animal.id}
+            />
+          </div>
         ) : null}
       </article>
 

@@ -121,6 +121,19 @@ class NameRequest(BaseModel):
     name: str = Field(min_length=1, max_length=40)
 
 
+class ReportRequest(BaseModel):
+    user_id: str = Field(alias="userId")
+    target_type: Literal["sighting", "animal"] = Field(alias="targetType")
+    target_id: str = Field(alias="targetId")
+    reason: Literal["duplicate", "wrong_info", "inappropriate", "at_risk", "privacy"]
+    note: Optional[str] = Field(default=None, max_length=300)
+
+
+class ResolveReportRequest(BaseModel):
+    user_id: str = Field(alias="userId")
+    status: Literal["resolved", "dismissed"]
+
+
 class ConfirmSightingRequest(BaseModel):
     analysis_id: str = Field(alias="analysisId")
     place_id: str = Field(alias="placeId")
@@ -531,6 +544,60 @@ def create_app(
             raise RequestValidationError(exc.errors()) from exc
         authorize_admin(place_id, request.user_id)
         get_repository().promote_name(place_id, animal_id, request.name.strip())
+        return {"ok": True}
+
+    @app.post(
+        "/places/{place_id}/reports",
+        dependencies=[Depends(require_internal_token)],
+    )
+    def create_report(
+        place_id: str,
+        payload: dict[str, Any] = Body(...),
+    ) -> dict[str, object]:
+        try:
+            request = ReportRequest.model_validate(payload)
+        except ValidationError as exc:
+            raise RequestValidationError(exc.errors()) from exc
+        authorize_place(place_id, request.user_id, require_write=True)
+        note = request.note.strip() if request.note else None
+        get_repository().create_report(
+            place_id,
+            request.target_type,
+            request.target_id,
+            request.user_id,
+            request.reason,
+            note,
+        )
+        return {"ok": True}
+
+    @app.get(
+        "/places/{place_id}/reports",
+        dependencies=[Depends(require_internal_token)],
+    )
+    def list_reports(
+        place_id: str,
+        user_id: str,
+    ) -> dict[str, object]:
+        authorize_admin(place_id, user_id)
+        return {"reports": get_repository().list_reports(place_id, "open")}
+
+    @app.post(
+        "/places/{place_id}/reports/{report_id}",
+        dependencies=[Depends(require_internal_token)],
+    )
+    def resolve_report(
+        place_id: str,
+        report_id: str,
+        payload: dict[str, Any] = Body(...),
+    ) -> dict[str, object]:
+        try:
+            request = ResolveReportRequest.model_validate(payload)
+        except ValidationError as exc:
+            raise RequestValidationError(exc.errors()) from exc
+        authorize_admin(place_id, request.user_id)
+        get_repository().resolve_report(
+            place_id, report_id, request.user_id, request.status
+        )
         return {"ok": True}
 
     @app.get(

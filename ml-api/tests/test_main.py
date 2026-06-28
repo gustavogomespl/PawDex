@@ -58,6 +58,20 @@ class FakeRepository:
             {"name": "Mingau", "votes": 3},
             {"name": "Tigrinho", "votes": 1},
         ]
+        self.report_calls = []
+        self.resolve_report_calls = []
+        self.reports = [
+            {
+                "id": "report-1",
+                "targetType": "animal",
+                "targetId": "animal-1",
+                "reason": "duplicate",
+                "note": None,
+                "status": "open",
+                "createdAt": "2026-06-27T10:00:00Z",
+                "reporterName": "Ana",
+            }
+        ]
 
     def healthcheck(self) -> None:
         self.healthcheck_calls += 1
@@ -107,6 +121,17 @@ class FakeRepository:
 
     def promote_name(self, place_id, animal_id, name):
         self.promote_name_calls.append((place_id, animal_id, name))
+
+    def create_report(self, place_id, target_type, target_id, reporter_id, reason, note):
+        self.report_calls.append(
+            (place_id, target_type, target_id, reporter_id, reason, note)
+        )
+
+    def list_reports(self, place_id, status="open"):
+        return self.reports
+
+    def resolve_report(self, place_id, report_id, resolver_id, status):
+        self.resolve_report_calls.append((place_id, report_id, resolver_id, status))
 
     def upsert_user(self, email: str, name: Optional[str] = None) -> dict[str, object]:
         self.upsert_calls.append({"email": email, "name": name})
@@ -1066,6 +1091,112 @@ def test_promote_name_forbidden_for_non_admin():
 
     assert response.status_code == 403
     assert repository.promote_name_calls == []
+
+
+def test_create_report_records_flag_for_member():
+    repository = FakeRepository()
+    client = TestClient(_app_with(repository))
+
+    response = client.post(
+        "/places/place-1/reports",
+        json={
+            "userId": "user-1",
+            "targetType": "animal",
+            "targetId": "animal-9",
+            "reason": "duplicate",
+            "note": "  mesmo gato do slot 3  ",
+        },
+    )
+
+    assert response.status_code == 200
+    assert repository.report_calls == [
+        ("place-1", "animal", "animal-9", "user-1", "duplicate", "mesmo gato do slot 3")
+    ]
+
+
+def test_create_report_rejects_unknown_reason():
+    repository = FakeRepository()
+    client = TestClient(_app_with(repository))
+
+    response = client.post(
+        "/places/place-1/reports",
+        json={
+            "userId": "user-1",
+            "targetType": "animal",
+            "targetId": "animal-9",
+            "reason": "because",
+        },
+    )
+
+    assert response.status_code == 422
+    assert repository.report_calls == []
+
+
+def test_create_report_forbidden_for_non_member():
+    repository = FakeRepository()
+    repository.place_privacy = "invite-only"
+    repository.membership = None
+    client = TestClient(_app_with(repository))
+
+    response = client.post(
+        "/places/place-1/reports",
+        json={
+            "userId": "intruder",
+            "targetType": "animal",
+            "targetId": "animal-9",
+            "reason": "inappropriate",
+        },
+    )
+
+    assert response.status_code == 403
+    assert repository.report_calls == []
+
+
+def test_list_reports_returns_queue_for_admin():
+    repository = FakeRepository()
+    client = TestClient(_app_with(repository))
+
+    response = client.get("/places/place-1/reports?user_id=admin")
+
+    assert response.status_code == 200
+    assert response.json()["reports"][0]["reason"] == "duplicate"
+
+
+def test_list_reports_forbidden_for_member():
+    repository = FakeRepository()
+    repository.membership = {"role": "member", "status": "approved"}
+    client = TestClient(_app_with(repository))
+
+    assert client.get("/places/place-1/reports?user_id=member").status_code == 403
+
+
+def test_resolve_report_as_admin():
+    repository = FakeRepository()
+    client = TestClient(_app_with(repository))
+
+    response = client.post(
+        "/places/place-1/reports/report-1",
+        json={"userId": "admin", "status": "dismissed"},
+    )
+
+    assert response.status_code == 200
+    assert repository.resolve_report_calls == [
+        ("place-1", "report-1", "admin", "dismissed")
+    ]
+
+
+def test_resolve_report_forbidden_for_member():
+    repository = FakeRepository()
+    repository.membership = {"role": "member", "status": "approved"}
+    client = TestClient(_app_with(repository))
+
+    response = client.post(
+        "/places/place-1/reports/report-1",
+        json={"userId": "member", "status": "resolved"},
+    )
+
+    assert response.status_code == 403
+    assert repository.resolve_report_calls == []
 
 
 def test_analyze_sighting_is_rate_limited(monkeypatch):

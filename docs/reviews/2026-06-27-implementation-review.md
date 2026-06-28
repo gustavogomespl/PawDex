@@ -146,8 +146,10 @@ Itens restantes da Fase D (os 2 menores, adiados):
 ### Fase E — Fechar o loop social — 🟡 **EM ANDAMENTO**
 > ✅ **Redesign visual "álbum da Copa" + feed — 2026-06-27.** Identidade Panini/Copa: binder verde-gramado + papel-figurinha creme + ouro de troféu; tipografia **Anton** (display/numeração) + **Hanken Grotesk** (corpo) via `next/font`; `globals.css` refeito. `AnimalStickerCard` virou **card de jogador** (camisa nº = slot, **OVR**, "posição" pela espécie, chip de raridade). **Raridade por recorrência** (`domain/pawdex/rarity.ts`): pouco visto = Comum, frequente = **Raro** (borda dourada), estrelas = **Lenda** (**cromado holográfico** + varredura de brilho, respeitando reduce-motion). `PlaceHeader` = banner de time + medidor; `AnimalTimeline` = card de detalhe; slots vazios = "por colar". **Feed "Últimos lances"** (`PlaceFeed`) no `PawDexApp`. Verificado: tsc, vitest 75, next build, e **revisão visual por screenshot (Chrome headless) de uma showcase temporária (removida)**.
 >
-> ⏳ Restante da E (social backend):
-- **Persistir sugestões + decisões** em `match_suggestions` (hoje morta) e usar `review_status='needs-review'`; adicionar opção **"não sei"** (hoje só existente/novo).
+> ✅ **Social (parte 2) — 2026-06-27.** **`match_suggestions` agora é gravada** (confirmação de match existente registra a sugestão confirmada — histórico de confirmação da comunidade). **Votação de nomes:** migração `0007` (`name_suggestions`, 1 voto por membro/animal), `repository.suggest_name`/`list_name_suggestions`/`promote_name`, endpoints (membro vota; GET devolve `canPromote`; admin promove), e `NameVoting` (lazy) no card do animal. Verificado: pytest 134, vitest 75, tsc, next build, **pg real** (upsert de voto + ranking + promote).
+>
+> ⏳ Restante da E:
+- ~~Persistir sugestões em `match_suggestions`~~ ✅ feito. Falta opção **"não sei"** no confirm + persistir as rejeitadas.
 - **Feed do lugar** (sightings já ordenadas por `taken_at DESC`).
 - **Fila de revisão anti-duplicata** + votação + "mesclar duplicatas" (admin).
 - **Reports/moderação** ligados ao `review_status`.

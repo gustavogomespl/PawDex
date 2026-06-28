@@ -846,6 +846,105 @@ select:focus-visible,
   font-size: 0.78rem;
 }
 
+/* ---------- Reportar problema ---------- */
+.detail-card__report {
+  margin-top: 10px;
+}
+
+.report-trigger {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--whistle);
+  font-weight: 800;
+  font-size: 0.84rem;
+  text-decoration: underline;
+}
+
+.report-done {
+  margin: 8px 0 0;
+  color: #2f7d52;
+  font-weight: 700;
+  font-size: 0.86rem;
+}
+
+.report-form {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.report-form select,
+.report-form input {
+  min-height: 38px;
+  padding: 0 10px;
+  border-radius: 10px;
+  border: 1px solid var(--cream-edge);
+  background: #fff;
+  color: var(--ink);
+}
+
+.report-form__actions {
+  display: flex;
+  gap: 8px;
+}
+
+.report-form__actions .primary-action,
+.report-form__actions .secondary-action {
+  min-height: 38px;
+  padding: 0 12px;
+  flex: 1;
+}
+
+/* ---------- Fila de denuncias (admin) ---------- */
+.reports-queue {
+  margin-top: 18px;
+}
+
+.reports-queue h2 {
+  color: #fff;
+  font-size: 1.3rem;
+}
+
+.reports-list {
+  display: grid;
+  gap: 10px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.reports-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: rgba(232, 88, 76, 0.1);
+  border: 1px solid rgba(232, 88, 76, 0.35);
+}
+
+.reports-list__copy {
+  display: grid;
+  gap: 3px;
+}
+
+.reports-list__copy strong {
+  color: #fff;
+}
+
+.reports-list__copy span {
+  color: var(--chalk-dim);
+  font-size: 0.82rem;
+}
+
+.reports-list__copy em {
+  color: var(--chalk);
+  font-size: 0.86rem;
+}
+
 /* ---------- Composer ---------- */
 .composer {
   margin-top: 18px;

@@ -129,6 +129,30 @@ class PawDexRepository(Protocol):
 
     def promote_name(self, place_id: str, animal_id: str, name: str) -> None: ...
 
+    def create_report(
+        self,
+        place_id: str,
+        target_type: str,
+        target_id: str,
+        reporter_id: str,
+        reason: str,
+        note: str | None,
+    ) -> None: ...
+
+    def list_reports(
+        self,
+        place_id: str,
+        status: str = "open",
+    ) -> list[dict[str, Any]]: ...
+
+    def resolve_report(
+        self,
+        place_id: str,
+        report_id: str,
+        resolver_id: str,
+        status: str,
+    ) -> None: ...
+
     def delete_content_by_user(self, user_id: str) -> dict[str, Any]: ...
 
     def record_audit(
@@ -466,6 +490,84 @@ class PostgresPawDexRepository:
                 WHERE id = %s AND place_id = %s
                 """,
                 (name, animal_id, place_id),
+            )
+
+    def create_report(
+        self,
+        place_id: str,
+        target_type: str,
+        target_id: str,
+        reporter_id: str,
+        reason: str,
+        note: str | None,
+    ) -> None:
+        with self.pool.connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO reports (
+                  place_id, target_type, target_id, reporter_id, reason, note
+                )
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (place_id, target_type, target_id, reporter_id, reason, note),
+            )
+            if target_type == "sighting":
+                # Surface the flagged sighting in the matching review loop.
+                connection.execute(
+                    """
+                    UPDATE sightings
+                    SET review_status = 'needs-review'
+                    WHERE id = %s AND place_id = %s
+                    """,
+                    (target_id, place_id),
+                )
+
+    def list_reports(
+        self,
+        place_id: str,
+        status: str = "open",
+    ) -> list[dict[str, Any]]:
+        with self.pool.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT r.id, r.target_type, r.target_id, r.reason, r.note,
+                       r.status, r.created_at, u.name AS reporter_name
+                FROM reports r
+                JOIN users u ON u.id = r.reporter_id
+                WHERE r.place_id = %s AND r.status = %s
+                ORDER BY r.created_at ASC
+                """,
+                (place_id, status),
+            ).fetchall()
+        return [
+            {
+                "id": str(row["id"]),
+                "targetType": row["target_type"],
+                "targetId": row["target_id"],
+                "reason": row["reason"],
+                "note": row["note"],
+                "status": row["status"],
+                "createdAt": iso(row["created_at"]),
+                "reporterName": row["reporter_name"],
+            }
+            for row in rows
+        ]
+
+    def resolve_report(
+        self,
+        place_id: str,
+        report_id: str,
+        resolver_id: str,
+        status: str,
+    ) -> None:
+        with self.pool.connection() as connection:
+            connection.execute(
+                """
+                UPDATE reports
+                SET status = %s, resolved_at = now(), resolved_by = %s
+                WHERE id = %s AND place_id = %s
+                """,
+                (status, resolver_id, report_id, place_id),
             )
 
     def delete_content_by_user(self, user_id: str) -> dict[str, Any]:

@@ -100,3 +100,10 @@ def test_name_suggestions_migration_chains_and_creates_table():
     assert 'revision = "0007_name_suggestions"' in sql
     assert 'down_revision = "0006_pending_crop_key"' in sql
     assert "create table if not exists name_suggestions" in sql.lower()
+
+
+def test_reports_migration_chains_and_creates_table():
+    sql = _read_migration("0008_reports.py")
+    assert 'revision = "0008_reports"' in sql
+    assert 'down_revision = "0007_name_suggestions"' in sql
+    assert "create table if not exists reports" in sql.lower()
