@@ -79,6 +79,15 @@ class PawDexRepository(Protocol):
         name: str | None = None,
     ) -> dict[str, Any]: ...
 
+    def set_user_password(
+        self,
+        email: str,
+        name: str | None,
+        password_hash: str,
+    ) -> dict[str, Any]: ...
+
+    def get_user_with_password(self, email: str) -> dict[str, Any] | None: ...
+
     def create_place(
         self,
         *,
@@ -204,6 +213,13 @@ def row_to_user(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def row_to_user_with_password(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **row_to_user(row),
+        "passwordHash": row["password_hash"],
+    }
+
+
 def row_to_animal(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": row["id"],
@@ -254,6 +270,37 @@ class PostgresPawDexRepository:
         if row is None:
             raise RuntimeError("User upsert did not return a row.")
         return row_to_user(row)
+
+    def set_user_password(
+        self,
+        email: str,
+        name: str | None,
+        password_hash: str,
+    ) -> dict[str, Any]:
+        sql = """
+            INSERT INTO users (email, name, password_hash)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (email)
+            DO UPDATE SET
+              name = COALESCE(EXCLUDED.name, users.name),
+              password_hash = EXCLUDED.password_hash
+            RETURNING id, email, name, avatar_url
+        """
+        with self.pool.connection() as connection:
+            row = connection.execute(sql, (email, name, password_hash)).fetchone()
+        if row is None:
+            raise RuntimeError("User password upsert did not return a row.")
+        return row_to_user(row)
+
+    def get_user_with_password(self, email: str) -> dict[str, Any] | None:
+        sql = """
+            SELECT id, email, name, avatar_url, password_hash
+            FROM users
+            WHERE email = %s
+        """
+        with self.pool.connection() as connection:
+            row = connection.execute(sql, (email,)).fetchone()
+        return row_to_user_with_password(row) if row else None
 
     def create_place(
         self,

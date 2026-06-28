@@ -12,8 +12,8 @@ export default function SignInPage() {
           </span>
           <h1 id="signin-title">Entrar na PawDex</h1>
           <p>
-            Crie sua conta ou entre com seu e-mail. Os codigos dos lugares ficam
-            dentro da area logada, separados do acesso da pessoa.
+            Crie sua conta ou entre com e-mail e senha. Os codigos dos lugares
+            ficam dentro da area logada, separados do acesso da pessoa.
           </p>
           <SignInForm />
         </div>

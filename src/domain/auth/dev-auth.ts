@@ -48,6 +48,25 @@ export function normalizeDisplayName(raw: string | null | undefined): string | n
   return name.length > 0 ? name : null;
 }
 
+async function postUserAuth(
+  path: string,
+  body: Record<string, unknown>,
+  fetchImpl: typeof fetch,
+  mlApiUrl: string,
+): Promise<SyncedUser> {
+  const response = await fetchImpl(`${mlApiUrl}${path}`, {
+    method: "POST",
+    headers: internalApiHeaders({ "content-type": "application/json" }),
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    throw new Error("Falha ao autenticar usuario.");
+  }
+
+  return (await response.json()) as SyncedUser;
+}
+
 export async function syncUser(
   email: string,
   name: string | null,
@@ -65,4 +84,28 @@ export async function syncUser(
   }
 
   return (await response.json()) as SyncedUser;
+}
+
+export async function registerUser(
+  email: string,
+  name: string,
+  password: string,
+  fetchImpl: typeof fetch = fetch,
+  mlApiUrl: string = process.env.ML_API_URL ?? DEFAULT_ML_API_URL,
+): Promise<SyncedUser> {
+  return postUserAuth(
+    "/users/register",
+    { email, name, password },
+    fetchImpl,
+    mlApiUrl,
+  );
+}
+
+export async function authenticateUser(
+  email: string,
+  password: string,
+  fetchImpl: typeof fetch = fetch,
+  mlApiUrl: string = process.env.ML_API_URL ?? DEFAULT_ML_API_URL,
+): Promise<SyncedUser> {
+  return postUserAuth("/users/login", { email, password }, fetchImpl, mlApiUrl);
 }

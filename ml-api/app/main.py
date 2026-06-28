@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field, ValidationError
 from app.config import load_settings
 from app.detection import Detector, load_image
 from app.ratelimit import RateLimiter
+from app.security import hash_password, verify_password
 from app.storage import is_storage_key
 
 if TYPE_CHECKING:
@@ -86,6 +87,17 @@ def read_upload_within_limit(file: UploadFile) -> bytes:
 class SyncUserRequest(BaseModel):
     email: str = Field(min_length=3)
     name: Optional[str] = None
+
+
+class RegisterUserRequest(BaseModel):
+    email: str = Field(min_length=3)
+    name: str = Field(min_length=1)
+    password: str = Field(min_length=8)
+
+
+class LoginUserRequest(BaseModel):
+    email: str = Field(min_length=3)
+    password: str = Field(min_length=8)
 
 
 class CreatePlaceRequest(BaseModel):
@@ -305,6 +317,27 @@ def create_app(
     @app.post("/users/sync", dependencies=[Depends(require_internal_token)])
     def sync_user(payload: SyncUserRequest) -> dict[str, object]:
         return get_repository().upsert_user(email=payload.email, name=payload.name)
+
+    @app.post("/users/register", dependencies=[Depends(require_internal_token)])
+    def register_user(payload: RegisterUserRequest) -> dict[str, object]:
+        return get_repository().set_user_password(
+            email=payload.email,
+            name=payload.name,
+            password_hash=hash_password(payload.password),
+        )
+
+    @app.post("/users/login", dependencies=[Depends(require_internal_token)])
+    def login_user(payload: LoginUserRequest) -> dict[str, object]:
+        user = get_repository().get_user_with_password(payload.email)
+        if user is None or not verify_password(payload.password, user.get("passwordHash")):
+            raise HTTPException(status_code=401, detail="Invalid credentials.")
+
+        return {
+            "id": user["id"],
+            "email": user["email"],
+            "name": user["name"],
+            "avatarUrl": user["avatarUrl"],
+        }
 
     @app.post("/places", dependencies=[Depends(require_internal_token)])
     def create_place(payload: dict[str, Any] = Body(...)) -> dict[str, object]:

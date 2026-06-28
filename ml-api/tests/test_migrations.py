@@ -107,3 +107,10 @@ def test_reports_migration_chains_and_creates_table():
     assert 'revision = "0008_reports"' in sql
     assert 'down_revision = "0007_name_suggestions"' in sql
     assert "create table if not exists reports" in sql.lower()
+
+
+def test_user_password_migration_chains_and_adds_hash_column():
+    sql = _read_migration("0009_user_password_hash.py")
+    assert 'revision = "0009_user_password_hash"' in sql
+    assert 'down_revision = "0008_reports"' in sql
+    assert "password_hash" in sql.lower()

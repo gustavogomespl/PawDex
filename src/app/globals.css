@@ -519,10 +519,14 @@ select:focus-visible,
   color: #221016;
 }
 
-/* raros: borda dourada; lendas: cromado holografico */
+/* raros: cromado dourado; lendas: holografico completo */
 .sticker-card--raro {
+  background:
+    linear-gradient(180deg, rgba(255, 253, 246, 0.96), rgba(246, 241, 227, 0.9)) padding-box,
+    linear-gradient(120deg, #fff4bd, var(--gold) 34%, #ffffff 52%, var(--gold-deep) 76%, #fff1a8) border-box;
+  border: 3px solid transparent;
   box-shadow:
-    inset 0 0 0 3px var(--gold),
+    inset 0 0 0 2px rgba(255, 255, 255, 0.62),
     0 12px 24px rgba(4, 18, 13, 0.4);
 }
 
@@ -556,7 +560,15 @@ select:focus-visible,
 }
 
 .sticker-card--raro .sticker-card__foil {
-  opacity: 0.4;
+  opacity: 0.72;
+  background: linear-gradient(
+    125deg,
+    rgba(255, 238, 140, 0.34),
+    rgba(255, 255, 255, 0.38) 30%,
+    rgba(231, 181, 60, 0.32) 54%,
+    rgba(116, 230, 214, 0.22) 78%,
+    rgba(255, 238, 140, 0.34)
+  );
 }
 
 .sticker-card__foil::after {
@@ -1209,6 +1221,27 @@ select:focus-visible,
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 12px;
+}
+
+.account-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid rgba(234, 242, 236, 0.14);
+}
+
+.account-header h1 {
+  margin: 0 0 6px;
+}
+
+.account-header p {
+  margin: 0;
+  color: var(--chalk-dim);
+  font-weight: 800;
 }
 
 .places-header--album {

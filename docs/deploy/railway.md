@@ -39,9 +39,9 @@ PAWDEX_ENABLE_DEV_AUTH=true
 ```
 
 `PAWDEX_ENABLE_DEV_AUTH=true` is acceptable for a private demo while the app has
-only the development e-mail login. Album invite codes are entered after the user
-is logged in, from "Meus albuns". Before opening this publicly, add a real auth
-provider and set dev auth to `false`.
+only the development credentials login. Album invite codes are entered after the
+user is logged in, from "Meus albuns". Before opening this publicly, add a real
+auth provider and set dev auth to `false`.
 
 ## `api` variables
 

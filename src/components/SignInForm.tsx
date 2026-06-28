@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { signIn } from "next-auth/react";
-import { Mail, UserRound } from "lucide-react";
+import { LockKeyhole, Mail, UserRound } from "lucide-react";
 
 type AuthMode = "signin" | "signup";
 
@@ -10,6 +10,7 @@ export function SignInForm() {
   const [mode, setMode] = useState<AuthMode>("signin");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -20,6 +21,8 @@ export function SignInForm() {
     setIsSubmitting(true);
     await signIn("dev-email", {
       email,
+      password,
+      mode,
       ...(mode === "signup" ? { name } : {}),
       redirectTo: "/",
     });
@@ -76,6 +79,22 @@ export function SignInForm() {
             autoComplete="email"
             placeholder="voce@empresa.com"
             onChange={(event) => setEmail(event.target.value)}
+          />
+        </span>
+      </label>
+      <label>
+        <span>Senha</span>
+        <span className="field-shell">
+          <LockKeyhole aria-hidden="true" size={18} />
+          <input
+            type="password"
+            name="password"
+            value={password}
+            required
+            minLength={8}
+            autoComplete={mode === "signup" ? "new-password" : "current-password"}
+            placeholder="minimo 8 caracteres"
+            onChange={(event) => setPassword(event.target.value)}
           />
         </span>
       </label>

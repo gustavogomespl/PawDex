@@ -7,6 +7,7 @@ from PIL import Image
 
 from app.detection import DetectionResponse
 from app.main import create_app, is_place_access_allowed, is_within_geofence
+from app.security import hash_password, verify_password
 
 
 class FakeDetector:
@@ -26,6 +27,8 @@ class FakeRepository:
         self.confirm_existing_calls = []
         self.confirm_new_calls = []
         self.upsert_calls = []
+        self.set_password_calls = []
+        self.user_with_password = None
         self.create_place_calls = []
         self.list_places_calls = []
         self.confirm_error: ValueError | None = None
@@ -142,6 +145,24 @@ class FakeRepository:
     def upsert_user(self, email: str, name: Optional[str] = None) -> dict[str, object]:
         self.upsert_calls.append({"email": email, "name": name})
         return {"id": "user-1", "email": email, "name": name, "avatarUrl": None}
+
+    def set_user_password(
+        self,
+        email: str,
+        name: Optional[str],
+        password_hash: str,
+    ) -> dict[str, object]:
+        self.set_password_calls.append(
+            {"email": email, "name": name, "password_hash": password_hash}
+        )
+        return {"id": "user-1", "email": email, "name": name, "avatarUrl": None}
+
+    def get_user_with_password(self, email: str):
+        if self.user_with_password is None:
+            return None
+        if self.user_with_password["email"] != email:
+            return None
+        return self.user_with_password
 
     def create_place(self, **kwargs) -> dict[str, object]:
         self.create_place_calls.append(kwargs)
@@ -522,6 +543,85 @@ def test_users_sync_requires_email():
 
     assert response.status_code == 422
     assert repository.upsert_calls == []
+
+
+def test_users_register_hashes_password_and_returns_user():
+    repository = FakeRepository()
+    app = create_app(
+        detector_factory=lambda: FakeDetector(DetectionResponse([], None)),
+        repository_factory=lambda: repository,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/users/register",
+        json={
+            "email": "tutor@example.com",
+            "name": "Tutor",
+            "password": "senha-segura",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["email"] == "tutor@example.com"
+    assert len(repository.set_password_calls) == 1
+    call = repository.set_password_calls[0]
+    assert call["email"] == "tutor@example.com"
+    assert call["name"] == "Tutor"
+    assert call["password_hash"] != "senha-segura"
+    assert verify_password("senha-segura", call["password_hash"]) is True
+
+
+def test_users_login_returns_user_for_matching_password():
+    repository = FakeRepository()
+    repository.user_with_password = {
+        "id": "user-1",
+        "email": "tutor@example.com",
+        "name": "Tutor",
+        "avatarUrl": None,
+        "passwordHash": hash_password("senha-segura"),
+    }
+    app = create_app(
+        detector_factory=lambda: FakeDetector(DetectionResponse([], None)),
+        repository_factory=lambda: repository,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/users/login",
+        json={"email": "tutor@example.com", "password": "senha-segura"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "id": "user-1",
+        "email": "tutor@example.com",
+        "name": "Tutor",
+        "avatarUrl": None,
+    }
+
+
+def test_users_login_rejects_wrong_password():
+    repository = FakeRepository()
+    repository.user_with_password = {
+        "id": "user-1",
+        "email": "tutor@example.com",
+        "name": "Tutor",
+        "avatarUrl": None,
+        "passwordHash": hash_password("senha-segura"),
+    }
+    app = create_app(
+        detector_factory=lambda: FakeDetector(DetectionResponse([], None)),
+        repository_factory=lambda: repository,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/users/login",
+        json={"email": "tutor@example.com", "password": "senha-errada"},
+    )
+
+    assert response.status_code == 401
 
 
 def test_create_place_endpoint_creates_and_returns_place():
